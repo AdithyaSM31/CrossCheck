@@ -273,6 +273,16 @@ def _cmd_relations(args: argparse.Namespace) -> int:
     if args.type:
         where.append("r.type = ?")
         params.append(args.type.upper())
+    else:
+        # UNRELATED is bookkeeping that stops reconcile re-paying to ask about a pair it
+        # already settled -- not a finding, so it stays out of an unfiltered listing.
+        where.append("r.type != 'UNRELATED'")
+    if args.query:
+        where.append(
+            "(a.subject LIKE ? OR COALESCE(at.canon_name, a.attribute_raw) LIKE ?"
+            " OR a.value_raw LIKE ? OR b.value_raw LIKE ? OR r.explanation LIKE ?)"
+        )
+        params += [f"%{args.query}%"] * 5
     if args.cross_document:
         where.append("a.doc_id != b.doc_id")
     if where:
@@ -405,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("relations", help="inspect discovered relationships")
     p.add_argument("--type", help="CORROBORATES | CONTRADICTS | RECONCILED_BY_CONTEXT | ...")
+    p.add_argument("--query", help="match subject, attribute, either value, or explanation")
     p.add_argument("--cross-document", action="store_true")
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(fn=_cmd_relations)

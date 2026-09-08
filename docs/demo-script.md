@@ -1,0 +1,145 @@
+# 3-minute demo — shot list
+
+Everything below is verified against the committed sample database. Every search term and
+command was run and returns exactly what the script says it does.
+
+**Spoken words are the hard budget**, not the number of things to click. The script is 457
+words: about 2:45 at a brisk demo pace (~165 wpm), leaving ~15 seconds for navigation
+pauses. If you run long, drop segment 2's third sentence, then segment 8 entirely — the
+four cases and the evidence shot are what's actually being marked.
+
+## Before you hit record
+
+```bash
+cd crosscheck
+cp samples/crosscheck.sample.db data/crosscheck.db      # the real, populated run
+python -m uvicorn crosscheck.api.app:app --port 8077
+```
+
+- Open <http://localhost:8077> — land on **Documents**.
+- Open a second terminal, `cd crosscheck`, ready for the CLI shots.
+- Have one PDF in your file picker ready to drag (any of `starter-datasets/**`, or an
+  unrelated PDF — it works on documents it has never seen, which is worth saying).
+- Browser zoom ~110%. Close other tabs.
+
+---
+
+## 1 · Open — 0:00–0:15
+
+**Screen:** Documents tab. The six documents and the stat row are visible.
+
+> "This is CrossCheck. It reads PDFs, ties every fact to the exact words that support it,
+> and works out when facts agree, disagree, or only *look* like they disagree. Six
+> documents here — Delhivery filings and three reports on the Indian economy — about seven
+> and a half thousand facts."
+
+---
+
+## 2 · A PDF going in — 0:15–0:35
+
+**Screen:** Drag a PDF onto the drop zone. Progress bar starts, stage label moves through
+`ingesting` → `identifying` → `extracting: n/N`.
+
+> "Drop in a PDF and the whole thing runs — layout rebuilt from word positions, facts
+> extracted, each one checked against the source, then compared against everything already
+> known. It takes a few minutes, so here's a corpus already built."
+
+**Cut** as soon as the counter ticks. Don't wait for it.
+
+---
+
+## 3 · Grounding — the core claim — 0:35–1:05
+
+**Screen:** **Facts** tab → type `8,142` in search → click the first row
+(`revenue from services = ₹8,142 Cr`). The detail panel opens with the quote, the
+relationships, and the highlighted page image.
+
+> "Every fact had to survive two checks: its quote has to actually appear in the source
+> text, and the number has to appear inside that quote. That second check is the one that
+> matters — it catches a real quote paired with a number lifted from the next row of a
+> table. Anything that fails is rejected, not stored. And here's the page it came from,
+> with the evidence boxed."
+
+*(Let the highlighted slide image sit on screen for a beat — it's the strongest single
+image in the demo.)*
+
+---
+
+## 4 · Case 3 — an apparent contradiction, explained — 1:05–1:30
+
+**Screen:** Terminal.
+
+```bash
+python -m crosscheck.cli relations --type RECONCILED_BY_CONTEXT --query "against Q4 FY2023-24" --limit 1
+```
+
+> "₹8,142 crore and ₹2,076 crore, same company, same measure. That looks like a flat
+> contradiction. It isn't — one is the full year, the other is the fourth quarter inside
+> it. The system resolves both periods to real date intervals, sees that one contains the
+> other, and says so. No model call: a rule decided this."
+
+---
+
+## 5 · Case 1 — corroboration between facts that aren't the same claim — 1:30–1:55
+
+**Screen:** Terminal.
+
+```bash
+python -m crosscheck.cli relations --type DERIVED_CONSISTENT --query "2,076" --limit 1
+```
+
+> "Here's the more interesting kind of agreement. EBITDA of 46 crore, revenue of 2,076
+> crore, and a stated margin of 2.2 percent. No two of those are the same claim, so nothing
+> matches on keys — but 46 divided by 2,076 is 2.22 percent, which is the stated margin.
+> Nothing about EBITDA is hard-coded; it looks for arithmetic that holds between facts
+> sharing a subject and a period."
+
+---
+
+## 6 · Case 2 — a genuine disagreement — 1:55–2:25
+
+**Screen:** Back to the browser, **Facts** tab. Search `real gdp grew` → one result
+(IMF, 6.5%, FY2024-25). Then clear and search `advance estimates` → first result
+(Economic Survey, 6.4%, FY2024-25).
+
+> "Real GDP growth, same Indian fiscal year. The IMF says 6.5 percent. The Economic Survey
+> says 6.4, and calls it a first advance estimate. Same measure, same twelve months,
+> different numbers. Being straight about this one: the system files it under 'reconciled'
+> because the extractor put a bogus scope tag on one side — a rule explained away a real
+> difference. That's documented as a known failure, not hidden."
+
+---
+
+## 7 · Case 4 — what it gets wrong — 2:25–2:50
+
+**Screen:** **Review** tab. The rejection-reason table is at the top.
+
+> "Which is the point of this screen. Fourteen hundred proposed facts were refused — eight
+> hundred where the quote wasn't in the source at all, and a hundred and sixty-eight where
+> the quote was real but the number wasn't in it. That second kind is the dangerous one.
+> Reading this screen is how most of this got fixed — five real bugs, including one that
+> silently merged 'revenue' with 'percentage of revenue' across the whole vocabulary."
+
+---
+
+## 8 · Close — 2:50–3:00
+
+**Screen:** **Findings** tab, type filter open so the counts show.
+
+> "Forty-five hundred relationships, and every one records whether a rule or the model
+> decided it. The whole run is committed, so you can browse it without a key."
+
+---
+
+## If you fumble
+
+- **Search returns nothing** — check you copied the sample DB over `data/crosscheck.db`.
+- **Evidence image doesn't load** — it needs `starter-datasets/` present; it's committed, so
+  just confirm you're running from the repo root.
+- **Upload seems stuck** — expected; it's rate-limited on the free tier. Cut away, that shot
+  only needs five seconds of movement.
+
+## Two things worth saying if you have room
+
+- It runs on a free API tier — the table extraction for the whole corpus cost nothing.
+- Nothing is specific to these documents: no hard-coded facts, filenames, or schemas.
