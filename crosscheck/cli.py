@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -117,6 +118,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
             concurrency=args.concurrency or settings.concurrency,
             timeout=settings.request_timeout,
             max_calls=args.max_calls or settings.max_calls,
+            extra_body=settings.extract.extra_body(),
+            tokens_per_minute=settings.tokens_per_minute,
         )
         try:
             for doc_id in ids:
@@ -195,6 +198,158 @@ def _cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def _reason_client(args: argparse.Namespace):
+    from .llm.client import LLMClient
+
+    return LLMClient(
+        settings.reason,
+        concurrency=args.concurrency or settings.concurrency,
+        timeout=settings.request_timeout,
+        max_calls=args.max_calls or settings.max_calls,
+        extra_body=settings.reason.extra_body(),
+        tokens_per_minute=settings.tokens_per_minute,
+    )
+
+
+def _cmd_link(args: argparse.Namespace) -> int:
+    """Consolidate the attribute vocabulary and rebuild claim keys."""
+    from .link.attributes import consolidate
+
+    print(f"using {settings.reason.describe()}" if not args.no_llm else "using rules only")
+
+    async def run() -> None:
+        client = None if args.no_llm else _reason_client(args)
+        try:
+            stats = await consolidate(client, use_llm=not args.no_llm)
+            print(stats.summary())
+        finally:
+            if client:
+                print(f"model usage -- {client.usage.summary()}")
+                await client.aclose()
+
+    asyncio.run(run())
+    return 0
+
+
+def _cmd_reconcile(args: argparse.Namespace) -> int:
+    from .reason.adjudicate import reconcile
+
+    print(f"using {settings.reason.describe()}" if not args.no_llm else "using rules only")
+
+    async def run() -> None:
+        client = None if args.no_llm else _reason_client(args)
+        try:
+            def progress(stage: str, done: int, total: int) -> None:
+                print(f"\r  {stage}: {done}/{total}", end="", flush=True)
+
+            stats = await reconcile(
+                client, max_llm_calls=args.max_adjudications, progress=progress
+            )
+            print(f"\r{stats.summary()}")
+        finally:
+            if client:
+                print(f"model usage -- {client.usage.summary()}")
+                await client.aclose()
+
+    asyncio.run(run())
+    return 0
+
+
+def _cmd_relations(args: argparse.Namespace) -> int:
+    sql = """SELECT r.*,
+                    a.subject sa, a.value_raw va, a.period_label pa, a.evidence_quote qa,
+                    a.evidence_page ga, COALESCE(da.publisher, da.filename) da_name,
+                    b.subject sb, b.value_raw vb, b.period_label pb, b.evidence_quote qb,
+                    b.evidence_page gb, COALESCE(db.publisher, db.filename) db_name,
+                    COALESCE(at.canon_name, a.attribute_raw) attr
+               FROM relations r
+               JOIN facts a ON a.id = r.fact_a
+               JOIN facts b ON b.id = r.fact_b
+               JOIN documents da ON da.id = a.doc_id
+               JOIN documents db ON db.id = b.doc_id
+               LEFT JOIN attributes at ON at.id = a.attribute_id"""
+    where, params = [], []
+    if args.type:
+        where.append("r.type = ?")
+        params.append(args.type.upper())
+    if args.cross_document:
+        where.append("a.doc_id != b.doc_id")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY r.confidence DESC LIMIT ?"
+    params.append(args.limit)
+
+    with session() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        if not args.type:
+            print("== relation counts ==")
+            for r in conn.execute(
+                """SELECT type, decided_by, COUNT(*) n FROM relations
+                   GROUP BY type, decided_by ORDER BY n DESC"""
+            ):
+                print(f"  {r['n']:>5}  {r['type']:<22} by {r['decided_by']}")
+            print()
+
+    for r in rows:
+        mark = "x" if r["type"] == "CONTRADICTS" else "="
+        print(f"\n[{mark}] {r['type']}"
+              + (f"  ({r['discriminator']})" if r["discriminator"] else "")
+              + f"  conf={r['confidence']:.2f}  by {r['decided_by']}")
+        print(f"    {r['sa']} — {r['attr']}")
+        print(f"      A  {r['va']}  [{r['pa'] or 'no period'}]  {r['da_name']} p{r['ga'] + 1}")
+        print(f"         \"{(r['qa'] or '')[:130]}\"")
+        print(f"      B  {r['vb']}  [{r['pb'] or 'no period'}]  {r['db_name']} p{r['gb'] + 1}")
+        print(f"         \"{(r['qb'] or '')[:130]}\"")
+        if r["explanation"]:
+            print(f"      -> {r['explanation']}")
+    print(f"\n{len(rows)} relation(s)")
+    return 0
+
+
+def _cmd_schema(args: argparse.Namespace) -> int:
+    """The attribute vocabulary as it currently stands."""
+    with session() as conn:
+        rows = conn.execute(
+            """SELECT canon_name, aliases_json, unit_family, n_facts
+                 FROM attributes ORDER BY n_facts DESC LIMIT ?""",
+            (args.limit,),
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) n FROM attributes").fetchone()["n"]
+    print(f"{total} canonical attributes discovered\n")
+    for r in rows:
+        aliases = json.loads(r["aliases_json"] or "[]")
+        extra = [a for a in aliases if a != r["canon_name"]]
+        print(f"  {r['n_facts']:>5}  {r['canon_name']}  [{r['unit_family'] or '?'}]")
+        if extra:
+            print(f"         aka: {', '.join(extra[:6])}")
+    return 0
+
+
+def _cmd_evidence(args: argparse.Namespace) -> int:
+    from .ground.render import evidence_rects, render_evidence
+
+    with session() as conn:
+        row = conn.execute(
+            """SELECT f.*, d.filename FROM facts f JOIN documents d ON d.id = f.doc_id
+                WHERE f.id = ?""",
+            (args.fact_id,),
+        ).fetchone()
+    if row is None:
+        print(f"no fact {args.fact_id}", file=sys.stderr)
+        return 1
+
+    print(f"{row['subject']} | {row['attribute_raw']} = {row['value_raw']}")
+    print(f"  {row['filename']} page {row['evidence_page'] + 1}")
+    print(f"  grounding: {row['grounding']} ({row['grounding_score']:.0f})")
+    print(f"  quote: \"{row['evidence_quote'][:200]}\"")
+
+    located, _, _ = evidence_rects(args.fact_id)
+    print(f"  located by: {located.how} ({len(located.rects)} region(s))")
+    path = render_evidence(args.fact_id)
+    print(f"  rendered: {path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="crosscheck")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -231,6 +386,33 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("review", help="inspect rejected extractions")
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(fn=_cmd_review)
+
+    p = sub.add_parser("link", help="consolidate the attribute vocabulary")
+    p.add_argument("--no-llm", action="store_true", help="fuzzy grouping only")
+    p.add_argument("--concurrency", type=int, default=0)
+    p.add_argument("--max-calls", type=int, default=0)
+    p.set_defaults(fn=_cmd_link)
+
+    p = sub.add_parser("reconcile", help="find corroborations and contradictions")
+    p.add_argument("--no-llm", action="store_true", help="rule-decided relations only")
+    p.add_argument("--max-adjudications", type=int, default=250)
+    p.add_argument("--concurrency", type=int, default=0)
+    p.add_argument("--max-calls", type=int, default=0)
+    p.set_defaults(fn=_cmd_reconcile)
+
+    p = sub.add_parser("relations", help="inspect discovered relationships")
+    p.add_argument("--type", help="CORROBORATES | CONTRADICTS | RECONCILED_BY_CONTEXT | ...")
+    p.add_argument("--cross-document", action="store_true")
+    p.add_argument("--limit", type=int, default=10)
+    p.set_defaults(fn=_cmd_relations)
+
+    p = sub.add_parser("schema", help="the discovered attribute vocabulary")
+    p.add_argument("--limit", type=int, default=40)
+    p.set_defaults(fn=_cmd_schema)
+
+    p = sub.add_parser("evidence", help="render a fact's evidence on its page")
+    p.add_argument("fact_id", type=int)
+    p.set_defaults(fn=_cmd_evidence)
 
     args = parser.parse_args(argv)
     return args.fn(args)

@@ -36,6 +36,10 @@ class RoleConfig:
     base_url: str
     api_key: str
     model: str
+    # Reasoning models bill their thinking. On gpt-oss, "low" measured better than
+    # "medium" on this corpus -- more facts, 27% fewer output tokens, half the latency --
+    # so the reasoning budget was buying nothing but token-per-minute pressure.
+    reasoning_effort: str = ""
 
     @property
     def configured(self) -> bool:
@@ -43,7 +47,11 @@ class RoleConfig:
 
     def describe(self) -> str:
         host = self.base_url.split("//")[-1].split("/")[0] or "?"
-        return f"{self.role}: {self.model} via {host}"
+        effort = f" (reasoning={self.reasoning_effort})" if self.reasoning_effort else ""
+        return f"{self.role}: {self.model} via {host}{effort}"
+
+    def extra_body(self) -> dict:
+        return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}
 
 
 def _role(name: str, default_model: str) -> RoleConfig:
@@ -61,6 +69,10 @@ def _role(name: str, default_model: str) -> RoleConfig:
             or _env("CROSSCHECK_MODEL")
             or default_model
         ),
+        reasoning_effort=(
+            _env(f"CROSSCHECK_{up}_REASONING_EFFORT")
+            or _env("CROSSCHECK_REASONING_EFFORT")
+        ),
     )
 
 
@@ -74,6 +86,9 @@ class Settings:
     # runaway extraction loop against a paid endpoint is an expensive way to find a bug.
     max_calls: int = int(_env("CROSSCHECK_MAX_CALLS", "0") or 0)
     request_timeout: float = float(_env("CROSSCHECK_TIMEOUT", "120") or 120)
+    # Tokens-per-minute ceiling to pace requests under. 0 learns it from the provider's
+    # own rate-limit headers on the first response.
+    tokens_per_minute: int = int(_env("CROSSCHECK_TPM", "0") or 0)
 
     db_path: Path = REPO_ROOT / _env("CROSSCHECK_DB", "data/crosscheck.db")
     data_dir: Path = REPO_ROOT / _env("CROSSCHECK_DATA_DIR", "data")

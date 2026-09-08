@@ -300,6 +300,8 @@ async def extract_document(
             concurrency=settings.concurrency,
             timeout=settings.request_timeout,
             max_calls=settings.max_calls,
+            extra_body=settings.extract.extra_body(),
+            tokens_per_minute=settings.tokens_per_minute,
         )
 
     done = 0

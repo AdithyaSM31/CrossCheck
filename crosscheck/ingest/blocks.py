@@ -32,8 +32,8 @@ from .layout import (
 from .pdf import Page, sha256_text
 
 MIN_BLOCK_CHARS = 25
-PACK_TARGET = 3600  # characters per extraction unit
-PACK_MAX = 5200
+PACK_TARGET = 5000  # characters per extraction unit
+PACK_MAX = 7000
 
 # Cues that a block states something factual without containing a digit — appointments,
 # addresses, auditors, resignations. Grammatical cues, not facts about any one company.

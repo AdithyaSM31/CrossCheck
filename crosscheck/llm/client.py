@@ -25,8 +25,62 @@ import time
 from dataclasses import dataclass, field
 
 import httpx
+from collections import deque
 
 from ..config import RoleConfig
+
+
+class TokenBucket:
+    """A sliding-window budget for tokens per minute.
+
+    Free tiers meter tokens, not requests. Discovering that by firing requests and reacting
+    to 429s wastes most of the budget: several workers overshoot together, all back off
+    together, and the connection sits idle through the penalty. Reserving budget *before*
+    sending turns a thrashing retry loop into a steady stream -- on Groq's 8,000 tokens per
+    minute this was the difference between a 28-hour projection and a ~9-hour one.
+
+    The limit is learned from the provider's own rate-limit headers when it publishes them.
+    """
+
+    def __init__(self, tokens_per_minute: int = 0) -> None:
+        self.limit = tokens_per_minute
+        self._spent: deque[tuple[float, int]] = deque()
+        self._lock = asyncio.Lock()
+
+    def _release_old(self, now: float) -> int:
+        while self._spent and now - self._spent[0][0] > 60.0:
+            self._spent.popleft()
+        return sum(t for _, t in self._spent)
+
+    async def acquire(self, estimate: int) -> None:
+        if not self.limit:
+            return
+        estimate = min(estimate, self.limit)
+        async with self._lock:
+            while True:
+                now = time.monotonic()
+                used = self._release_old(now)
+                if used + estimate <= self.limit:
+                    self._spent.append((now, estimate))
+                    return
+                oldest = self._spent[0][0]
+                await asyncio.sleep(max(0.25, 60.0 - (now - oldest) + 0.1))
+
+    def reconcile(self, estimate: int, actual: int) -> None:
+        """Correct the reservation once the true cost is known."""
+        if not self.limit or not self._spent:
+            return
+        self._spent.append((time.monotonic(), max(0, actual - estimate)))
+
+    def observe_limit(self, headers) -> None:
+        if self.limit:
+            return
+        raw = headers.get("x-ratelimit-limit-tokens")
+        if raw:
+            try:
+                self.limit = int(float(raw))
+            except ValueError:
+                pass
 
 
 class LLMError(RuntimeError):
@@ -119,6 +173,8 @@ class LLMClient:
         concurrency: int = 4,
         timeout: float = 120.0,
         max_calls: int = 0,
+        extra_body: dict | None = None,
+        tokens_per_minute: int = 0,
     ) -> None:
         if not cfg.configured:
             raise LLMError(
@@ -128,6 +184,10 @@ class LLMClient:
         self.cfg = cfg
         self.usage = Usage()
         self.max_calls = max_calls
+        # Provider-specific knobs (e.g. reasoning_effort on Groq's gpt-oss models, where
+        # reasoning tokens dominate the token-per-minute budget).
+        self.extra_body = extra_body or {}
+        self.bucket = TokenBucket(tokens_per_minute)
         self._sem = asyncio.Semaphore(max(1, concurrency))
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -170,6 +230,7 @@ class LLMClient:
         }
         if json_mode:
             body["response_format"] = {"type": "json_object"}
+        body.update(self.extra_body)
         return (
             f"{self.cfg.base_url.rstrip('/')}/chat/completions",
             {
@@ -217,7 +278,12 @@ class LLMClient:
         started = time.perf_counter()
         last: Exception | None = None
 
+        # Roughly 3.6 characters per token, plus what the reply is likely to cost. Being
+        # approximate is fine; the reservation is reconciled against the real usage after.
+        estimate = int((len(system) + len(user)) / 3.6) + 700
+
         async with self._sem:
+            await self.bucket.acquire(estimate)
             for attempt in range(attempts):
                 try:
                     r = await self._client.post(url, headers=headers, json=body)
@@ -227,8 +293,13 @@ class LLMClient:
                     await asyncio.sleep(min(2**attempt, 20) + random.random())
                     continue
 
+                self.bucket.observe_limit(r.headers)
+
                 if r.status_code == 200:
                     resp = self._read(self.cfg.provider, r.json())
+                    self.bucket.reconcile(
+                        estimate, resp.input_tokens + resp.output_tokens
+                    )
                     self.usage.calls += 1
                     self.usage.input_tokens += resp.input_tokens
                     self.usage.output_tokens += resp.output_tokens
