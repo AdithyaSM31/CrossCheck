@@ -297,6 +297,13 @@ def reconstruct_table(
     rows: list[dict] = []
     for ln in lines[header_idx + 1 :]:
         if _numeric_count(ln) < 1:
+            # A row with no values is a section banner -- "Growth (in percent)",
+            # "Prices (percent change, period average)". Dropping it strips the unit and
+            # the basis from every value underneath, so keep it as an unvalued marker.
+            text = ln.text.strip()
+            if len(text.split()) >= 2:
+                rows.append({"label": text, "cells": {}, "bbox": ln.bbox,
+                             "cell_boxes": [], "section": True})
             continue
         label_words = [w for w in ln.words if w.x0 < left_edge]
         cells: dict[str, str] = {}
@@ -325,7 +332,7 @@ def reconstruct_table(
 
     # A label that wrapped onto its own line belongs to the row beneath it.
     for i, r in enumerate(rows):
-        if not r["label"] and i > 0:
+        if not r["label"] and i > 0 and not r.get("section"):
             r["label"] = rows[i - 1]["label"]
 
     caption = " ".join(ln.text for ln in lines[: max(header_idx, 0)]).strip()
@@ -337,6 +344,11 @@ def render_table(rows: list[dict], caption: str = "") -> str:
     reader tracking column positions across a wide table."""
     out = [caption] if caption else []
     for r in rows:
+        if r.get("section"):
+            # Section banners carry the unit and basis for every row beneath them —
+            # "Growth (in percent)", "Balance of payments (in billions of U.S. dollars)".
+            out.append(f"[{r['label']}]")
+            continue
         pairs = "; ".join(f"{h}={v}" for h, v in r["cells"].items() if v)
         if pairs:
             out.append(f"{r['label'] or '(unlabelled row)'}: {pairs}")
@@ -382,6 +394,67 @@ def detect_columns(lines: list[Line], page_width: float) -> list[tuple[float, fl
     if len(left) < 5 or len(right) < 5:
         return [(0.0, page_width)]
     return [(0.0, split), (split, page_width)]
+
+
+def cluster_slide_tiles(lines: list[Line], page_width: float) -> list[list[Line]]:
+    """Group a slide's lines into the visual tiles a reader sees.
+
+    Infographic slides put a figure above its caption and place several such tiles side by
+    side. Reading the page in flat top-to-bottom order interleaves them, so
+    "Rs.2,076 Cr | Rs.46 Cr | Rs.21 Cr" arrives as one line and the captions as another,
+    and any reader — human or model — has to guess which caption belongs to which figure.
+    That guess is where a Q4 EBITDA figure gets recorded as annual revenue.
+
+    Clustering by horizontal position keeps each figure with its own caption.
+    """
+    if not lines:
+        return []
+
+    # Split each row at wide horizontal gaps first. Row banding has already merged the
+    # three tiles' figures into a single line because they share a baseline, so clustering
+    # whole lines can never separate them.
+    min_gap = page_width * 0.035
+    segments: list[Line] = []
+    for ln in lines:
+        current = [ln.words[0]]
+        for prev, word in zip(ln.words, ln.words[1:]):
+            if word.x0 - prev.x1 > min_gap:
+                segments.append(Line(current, ln.size, ln.bold))
+                current = [word]
+            else:
+                current.append(word)
+        segments.append(Line(current, ln.size, ln.bold))
+
+    full = [ln for ln in segments if (ln.bbox[2] - ln.bbox[0]) > page_width * 0.55]
+    rest = [ln for ln in segments if ln not in full]
+
+    if not rest:
+        return [sorted(full, key=lambda l: l.yc)] if full else []
+
+    # Cluster tiles by the x-centre of each segment. Growing a tile from overlapping
+    # extents does not work: captions are wider than the figures above them, so one tile
+    # widens until it swallows the page and the separation is lost again. Centres are
+    # stable because each tile is laid out around its own axis.
+    centres = sorted(( (l.bbox[0] + l.bbox[2]) / 2 for l in rest ))
+    bounds: list[float] = []
+    for prev, cur in zip(centres, centres[1:]):
+        if cur - prev > page_width * 0.05:
+            bounds.append((prev + cur) / 2)
+
+    def tile_of(ln: Line) -> int:
+        centre = (ln.bbox[0] + ln.bbox[2]) / 2
+        return sum(1 for b in bounds if centre > b)
+
+    grouped: dict[int, list[Line]] = {}
+    for ln in rest:
+        grouped.setdefault(tile_of(ln), []).append(ln)
+
+    tiles = [grouped[k] for k in sorted(grouped)]
+    for tile in tiles:
+        tile.sort(key=lambda l: (l.yc, l.bbox[0]))
+
+    banner = sorted(full, key=lambda l: l.yc)
+    return ([banner] if banner else []) + tiles
 
 
 # ---------------------------------------------------------------- prose reflow

@@ -27,12 +27,13 @@ from .layout import (
     reconstruct_paragraphs,
     reconstruct_table,
     render_table,
+    cluster_slide_tiles,
 )
 from .pdf import Page, sha256_text
 
 MIN_BLOCK_CHARS = 25
-PACK_TARGET = 1400  # characters per extraction unit
-PACK_MAX = 2600
+PACK_TARGET = 3600  # characters per extraction unit
+PACK_MAX = 5200
 
 # Cues that a block states something factual without containing a digit — appointments,
 # addresses, auditors, resignations. Grammatical cues, not facts about any one company.
@@ -228,12 +229,12 @@ def build_blocks(pages: list[Page]) -> list[Block]:
             rows, caption = reconstruct_table(region, page.width)
             text = render_table(rows, caption) if rows else ""
 
-            # A genuine table has at least two distinct columns. Without this check the
-            # detector fires on infographic figures stacked on a slide, produces a
-            # one-column "table", and — because the region is then consumed — silently
-            # deletes those figures from the page's prose.
+            # A genuine table needs distinct columns. Slides need a higher bar: metric
+            # tiles sitting side by side look like a two-column table, and accepting them
+            # interleaves three unrelated figures into one row while dropping a fourth.
+            # A real slide table (quarterly operating metrics) has three or more.
             columns = {h for r in rows for h in r["cells"]}
-            if len(columns) < 2 or len(text) < MIN_BLOCK_CHARS:
+            if len(columns) < (3 if slide else 2) or len(text) < MIN_BLOCK_CHARS:
                 continue
 
             taken.update(range(start, end + 1))
@@ -260,9 +261,14 @@ def build_blocks(pages: list[Page]) -> list[Block]:
         # Presentation slides are a different medium. Values sit above their captions in an
         # infographic grid, so paragraph re-flow and column splitting both scramble them.
         # A slide holds little enough text that the whole page is the right extraction unit,
-        # and it gives the model the caption next to the number in a single call.
-        if page.width > page.height:
-            text = "\n".join(ln.text for ln in prose).strip()
+        # and it gives the model the caption next to the number in a single call — but the
+        # tiles have to be separated first, or the figures arrive on one line and their
+        # captions on the next and the model has to guess which belongs to which.
+        if slide:
+            tiles = cluster_slide_tiles(prose, page.width)
+            text = "\n\n".join(
+                "\n".join(ln.text for ln in tile) for tile in tiles if tile
+            ).strip()
             if len(text) >= MIN_BLOCK_CHARS:
                 ok, why = classify(text, "paragraph")
                 out.append(
