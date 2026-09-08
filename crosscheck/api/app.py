@@ -157,12 +157,18 @@ def stats() -> dict:
             "documents": one("SELECT COUNT(*) FROM documents"),
             "facts": one("SELECT COUNT(*) FROM facts"),
             "attributes": one("SELECT COUNT(*) FROM attributes"),
-            "relations": one("SELECT COUNT(*) FROM relations"),
+            # UNRELATED relations are real rows -- storing the model's "not the same
+            # measure after all" verdict is what lets a later reconcile() run recognise a
+            # pair was already asked about and skip paying for it again -- but they are
+            # bookkeeping, not a finding, so they are excluded from every count a viewer
+            # would read as "how much did this system discover".
+            "relations": one("SELECT COUNT(*) FROM relations WHERE type != 'UNRELATED'"),
             "rejected": one("SELECT COUNT(*) FROM rejected_facts"),
             "by_type": {
                 r["type"]: r["n"]
                 for r in conn.execute(
-                    "SELECT type, COUNT(*) n FROM relations GROUP BY type"
+                    "SELECT type, COUNT(*) n FROM relations"
+                    " WHERE type != 'UNRELATED' GROUP BY type"
                 )
             },
         }
@@ -272,10 +278,15 @@ def relations(
              JOIN documents db ON db.id = b.doc_id
              LEFT JOIN attributes at ON at.id = a.attribute_id"""
     ]
+    # UNRELATED is bookkeeping (it exists so a later reconcile() run does not re-pay to
+    # ask the model about a pair it already decided isn't the same measure), not a
+    # finding -- explicitly requesting it is the only way to see it.
     where, params = [], []
     if type:
         where.append("r.type = ?")
         params.append(type.upper())
+    else:
+        where.append("r.type != 'UNRELATED'")
     if cross_document:
         where.append("a.doc_id != b.doc_id")
     if where:
@@ -287,7 +298,10 @@ def relations(
         rows = [dict(r) for r in conn.execute(" ".join(sql), params)]
         counts = {
             r["type"]: r["n"]
-            for r in conn.execute("SELECT type, COUNT(*) n FROM relations GROUP BY type")
+            for r in conn.execute(
+                "SELECT type, COUNT(*) n FROM relations WHERE type != 'UNRELATED'"
+                " GROUP BY type"
+            )
         }
     return {"counts": counts, "relations": rows}
 

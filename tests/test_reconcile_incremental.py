@@ -123,3 +123,30 @@ async def test_supersedes_ordering_does_not_defeat_the_dedupe_check():
 
     await reconcile(fake, max_llm_calls=10)
     assert fake.calls == 1, "SUPERSEDES's chronological storage order defeated the dedupe check"
+
+
+@pytest.mark.asyncio
+async def test_a_model_verdict_of_unrelated_is_still_deduped(db):
+    """_store() used to silently drop any label outside its five storable types, so
+    "UNRELATED" -- the model deciding two candidate-looking facts are not the same
+    measure after all -- left no trace. The next reconcile() run had no way to tell that
+    pair apart from one never asked about, and re-paid for it. On the real corpus this
+    was the majority of adjudication cost: most candidate pairs turn out unrelated on
+    inspection, and every one of them was being re-asked on every run."""
+    from crosscheck.reason.adjudicate import reconcile
+
+    with db.session() as conn:
+        _seed_ambiguous_pair(conn)
+
+    fake = FakeClient(label="UNRELATED")
+    await reconcile(fake, max_llm_calls=10)
+    assert fake.calls == 1
+
+    await reconcile(fake, max_llm_calls=10)
+    assert fake.calls == 1, "an UNRELATED verdict was not remembered, so it was re-asked"
+
+    with db.session() as conn:
+        stored = conn.execute(
+            "SELECT type FROM relations WHERE decided_by = 'llm'"
+        ).fetchone()
+    assert stored["type"] == "UNRELATED"

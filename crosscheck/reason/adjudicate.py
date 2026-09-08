@@ -156,7 +156,7 @@ async def _ask(client: LLMClient, a: FactView, b: FactView, verdict) -> dict | N
 def _store(conn, a: FactView, b: FactView, *, label, discriminator, explanation,
            confidence, decided_by, rule_label, meta=None) -> bool:
     if label not in {rules.CORROBORATES, rules.CONTRADICTS, rules.RECONCILED,
-                     rules.SUPERSEDES, rules.DERIVED}:
+                     rules.SUPERSEDES, rules.DERIVED, rules.UNRELATED}:
         return False
     lo, hi = (a, b) if a.id < b.id else (b, a)
     # SUPERSEDES is directional: fact_a is chronologically earlier, fact_b later.

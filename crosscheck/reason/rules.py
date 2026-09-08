@@ -34,6 +34,12 @@ CONTRADICTS = "CONTRADICTS"
 RECONCILED = "RECONCILED_BY_CONTEXT"
 SUPERSEDES = "SUPERSEDES"
 DERIVED = "DERIVED_CONSISTENT"
+# Stored, not discarded: on inspection the model decided two facts that looked like
+# candidates are not actually the same measure. Recording that is what lets a later
+# reconcile() run recognise the pair was already asked about and skip paying for it again
+# -- a verdict that vanished into nothing would look identical to "never asked" and get
+# re-sent to the model on every subsequent run.
+UNRELATED = "UNRELATED"
 
 
 @dataclass
