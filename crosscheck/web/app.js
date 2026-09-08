@@ -4,6 +4,9 @@ const $ = (s, r = document) => r.querySelector(s);
 const main = $("#main");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+/* Counts here run to five figures. Grouped digits are the difference between
+   reading 5,835 and counting the characters in 5835. */
+const num = (n) => Number(n ?? 0).toLocaleString("en-US");
 const api = async (p, o) => {
   const r = await fetch("/api" + p, o);
   if (!r.ok) throw new Error((await r.text()).slice(0, 200));
@@ -17,22 +20,34 @@ const state = { relType: "", crossOnly: false, factQuery: "", factDoc: "" };
 async function refreshCounts() {
   try {
     const s = await api("/stats");
+    // UNRELATED is bookkeeping -- the record that a pair was already adjudicated -- so it
+    // is never counted as a finding, here or on the Findings screen.
     const findings = Object.entries(s.by_type || {})
-      .filter(([k]) => k !== "CORROBORATES")
-      .reduce((a, [, v]) => a + v, 0) + (s.by_type?.CORROBORATES || 0);
-    $("#c-findings").textContent = findings || "";
-    $("#c-facts").textContent = s.facts || "";
-    $("#c-schema").textContent = s.attributes || "";
-    $("#c-review").textContent = s.rejected || "";
+      .filter(([k]) => k !== "UNRELATED")
+      .reduce((a, [, v]) => a + v, 0);
+    $("#c-findings").textContent = findings ? num(findings) : "";
+    $("#c-facts").textContent = s.facts ? num(s.facts) : "";
+    $("#c-schema").textContent = s.attributes ? num(s.attributes) : "";
+    $("#c-review").textContent = s.rejected ? num(s.rejected) : "";
   } catch (_) { /* first run, empty database */ }
 }
 
+/* Which model does which job is the first question anyone asks of a system like this,
+   so it is stated in the header rather than buried in a config file — but as two
+   labelled rows, not one long run of monospace that wraps at an arbitrary point. */
 async function health() {
+  const box = $("#health");
   try {
     const h = await api("/health");
-    $("#health").textContent = [h.extract, h.reason].filter(Boolean).join("  ·  ")
-      || "no model configured";
-  } catch (_) { $("#health").textContent = ""; }
+    const models = h.models || [];
+    box.innerHTML = models.length
+      ? models.map((m) => `
+          <span class="role">${esc(m.role)}</span>
+          <span class="what"><b>${esc(m.model)}</b>
+            <span>on ${esc(m.vendor)}${m.effort ? `, reasoning ${esc(m.effort)}` : ""}</span>
+          </span>`).join("")
+      : `<span class="none">No model configured — set one in <b>.env</b> to ingest a PDF.</span>`;
+  } catch (_) { box.innerHTML = ""; }
 }
 
 $("#nav").addEventListener("click", (e) => {
@@ -63,23 +78,30 @@ async function viewDocuments() {
       ${[["documents", "documents"], ["facts", "grounded facts"],
          ["attributes", "attributes discovered"], ["relations", "relationships"],
          ["rejected", "in review queue"]]
-        .map(([k, label]) => `<div class="stat"><b>${s[k] ?? 0}</b><span>${label}</span></div>`)
+        .map(([k, label]) =>
+          `<div class="stat"><b>${num(s[k])}</b><span>${label}</span></div>`)
         .join("")}
     </div>
     <div class="card">
-      <table>
-        <thead><tr><th>Document</th><th>Publisher</th><th>Published</th>
-          <th>Pages</th><th>Facts</th><th>Rejected</th><th>Status</th></tr></thead>
-        <tbody>${docs.map((d) => `
-          <tr>
-            <td><b>${esc(d.title || d.filename)}</b><div class="q">${esc(d.filename)}</div></td>
-            <td>${esc(d.publisher || "—")}</td>
-            <td class="mono">${esc(d.published_on || "—")}</td>
-            <td>${d.page_count}</td><td>${d.facts}</td><td>${d.rejected}</td>
-            <td><span class="chip">${esc(d.status)}</span></td>
-          </tr>`).join("") || `<tr><td colspan="7" class="empty">No documents yet.</td></tr>`}
-        </tbody>
-      </table>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Document</th><th>Publisher</th><th class="tight">Published</th>
+            <th class="num">Pages</th><th class="num">Facts</th><th class="num">Rejected</th>
+            <th class="tight">Status</th></tr></thead>
+          <tbody>${docs.map((d) => `
+            <tr>
+              <td class="wrap-any"><b>${esc(d.title || d.filename)}</b>
+                <div class="q">${esc(d.filename)}</div></td>
+              <td>${esc(d.publisher || "—")}</td>
+              <td class="tight mono">${esc(d.published_on || "—")}</td>
+              <td class="num">${num(d.page_count)}</td>
+              <td class="num">${num(d.facts)}</td>
+              <td class="num">${num(d.rejected)}</td>
+              <td class="tight"><span class="chip">${esc(d.status)}</span></td>
+            </tr>`).join("") || `<tr><td colspan="7" class="empty">No documents yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>`;
 
   const drop = $("#drop"), file = $("#file");
@@ -102,7 +124,7 @@ async function upload(f) {
     const { job_id } = await api("/documents", { method: "POST", body });
     poll(job_id, f.name);
   } catch (e) {
-    jobs.innerHTML = `<p class="lede" style="color:var(--contradict)">${esc(e.message)}</p>`;
+    jobs.innerHTML = `<p class="lede err">${esc(e.message)}</p>`;
   }
 }
 
@@ -112,11 +134,14 @@ async function poll(id, name) {
     const j = await api("/jobs/" + id);
     const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
     jobs.innerHTML = `
-      <div style="margin-top:14px">
-        <b>${esc(name)}</b> — ${esc(j.stage)}
-        ${j.total ? `<span class="chip">${j.done}/${j.total}</span>` : ""}
+      <div class="job">
+        <div class="job-head">
+          <b>${esc(name)}</b>
+          <span class="stage">${esc(j.stage)}</span>
+          ${j.total ? `<span class="chip">${num(j.done)} / ${num(j.total)} blocks</span>` : ""}
+        </div>
         <div class="bar"><i style="width:${j.stage === "done" ? 100 : pct}%"></i></div>
-        <div class="q" style="margin-top:6px">${esc(j.error || j.message || "")}</div>
+        <div class="q${j.error ? " err" : ""}">${esc(j.error || j.message || "")}</div>
       </div>`;
     if (j.stage !== "done" && j.stage !== "failed") setTimeout(tick, 1500);
     else { refreshCounts(); if (view === "documents") setTimeout(viewDocuments, 800); }
@@ -147,16 +172,18 @@ async function viewFindings() {
     <div class="card">
       <div class="row">
         <select id="type">
-          <option value="">All types (${Object.values(counts).reduce((a, b) => a + b, 0)})</option>
+          <option value="">All types (${num(Object.values(counts).reduce((a, b) => a + b, 0))})</option>
           ${["CONTRADICTS", "RECONCILED_BY_CONTEXT", "CORROBORATES", "DERIVED_CONSISTENT", "SUPERSEDES"]
             .filter((t) => counts[t])
-            .map((t) => `<option value="${t}" ${state.relType === t ? "selected" : ""}>
-              ${t.replace(/_/g, " ")} (${counts[t]})</option>`).join("")}
+            .map((t) => `<option value="${t}" ${state.relType === t ? "selected" : ""}>${
+              t.replace(/_/g, " ")} (${num(counts[t])})</option>`).join("")}
         </select>
         <label class="row" style="gap:6px">
           <input type="checkbox" id="cross" ${state.crossOnly ? "checked" : ""}>
-          cross-document only
+          Cross-document only
         </label>
+        <span class="grow"></span>
+        <span class="chip">showing ${num(data.relations.length)}</span>
       </div>
     </div>
     ${data.relations.map(card).join("") ||
@@ -171,11 +198,12 @@ function side(r, k) {
   return `
     <div class="side">
       <div class="val">${esc(r[k + "_value"])}</div>
-      ${quals.map((q) => `<span class="chip k">${esc(q)}</span>`).join(" ")}
+      ${quals.length ? `<div class="chips">${
+        quals.map((q) => `<span class="chip k">${esc(q)}</span>`).join("")}</div>` : ""}
       <div class="src">${esc(r[k + "_publisher"] || r[k + "_doc_title"])}
         · page ${r[k + "_page"] + 1}</div>
       <blockquote>${esc(r[k + "_quote"])}</blockquote>
-      <div style="margin-top:8px">
+      <div class="act-row">
         <button class="act" data-fact="${r[k + "_id"]}">Show on page</button>
       </div>
     </div>`;
@@ -184,12 +212,14 @@ function side(r, k) {
 function card(r) {
   return `
     <div class="card">
-      <span class="by">decided by ${esc(r.decided_by)}${
-        r.rule_label ? " · " + esc(r.rule_label) : ""}</span>
-      <span class="tag ${r.type}">${r.type.replace(/_/g, " ")}</span>
-      ${r.discriminator ? `<span class="chip">${esc(r.discriminator)}</span>` : ""}
-      <span class="chip">confidence ${Number(r.confidence || 0).toFixed(2)}</span>
-      <div style="margin-top:6px"><b>${esc(r.a_subject)}</b> — ${esc(r.attribute)}</div>
+      <div class="card-head">
+        <span class="tag ${r.type}">${r.type.replace(/_/g, " ")}</span>
+        ${r.discriminator ? `<span class="chip">${esc(r.discriminator)}</span>` : ""}
+        <span class="chip">confidence ${Number(r.confidence || 0).toFixed(2)}</span>
+        <span class="by">decided by ${esc(r.decided_by)}${
+          r.rule_label ? " · " + esc(r.rule_label) : ""}</span>
+      </div>
+      <div class="claim"><b>${esc(r.a_subject)}</b><span class="sep">—</span>${esc(r.attribute)}</div>
       <div class="pair">${side(r, "a")}${side(r, "b")}</div>
       ${r.explanation ? `<div class="why">${esc(r.explanation)}</div>` : ""}
       <div class="evidence" data-slot></div>
@@ -218,25 +248,32 @@ async function viewFacts() {
             ${esc(d.title || d.filename)}</option>`).join("")}
         </select>
         <span class="grow"></span>
-        <span class="chip">${data.total} matching</span>
+        <span class="chip">${num(data.total)} matching</span>
       </div>
     </div>
     <div class="card">
-      <table>
-        <thead><tr><th>Subject</th><th>Attribute</th><th>Value</th><th>Qualifiers</th>
-          <th>Source</th><th>Grounding</th></tr></thead>
-        <tbody>${data.facts.map((f) => `
-          <tr data-fact="${f.id}">
-            <td>${esc(f.subject)}</td>
-            <td>${esc(f.attribute)}</td>
-            <td><b>${esc(f.value_raw)}</b></td>
-            <td>${[f.period_label, f.scope, f.basis].filter(Boolean)
-                  .map((x) => `<span class="chip k">${esc(x)}</span>`).join(" ") || "—"}</td>
-            <td>${esc(f.publisher || f.doc_title)}<div class="q">p${f.evidence_page + 1}</div></td>
-            <td><span class="chip">${esc(f.grounding)}</span></td>
-          </tr>`).join("") || `<tr><td colspan="6" class="empty">No facts yet.</td></tr>`}
-        </tbody>
-      </table>
+      <div class="scroll">
+        <table class="fixed">
+          <colgroup><col style="width:20%"><col style="width:17%"><col style="width:18%">
+            <col style="width:14%"><col style="width:19%"><col style="width:12%"></colgroup>
+          <thead><tr><th>Subject</th><th>Attribute</th><th class="val-col">Value</th>
+            <th>Qualifiers</th><th>Source</th><th>Grounding</th></tr></thead>
+          <tbody>${data.facts.map((f) => `
+            <tr data-fact="${f.id}">
+              <td class="wrap-any">${esc(f.subject)}</td>
+              <td class="wrap-any">${esc(f.attribute)}</td>
+              <td class="val-col"><b>${esc(f.value_raw)}</b></td>
+              <td>${[f.period_label, f.scope, f.basis].filter(Boolean).length
+                    ? `<div class="chips">${[f.period_label, f.scope, f.basis].filter(Boolean)
+                        .map((x) => `<span class="chip k">${esc(x)}</span>`).join("")}</div>`
+                    : "—"}</td>
+              <td>${esc(f.publisher || f.doc_title)}
+                <div class="q">page ${f.evidence_page + 1}</div></td>
+              <td><span class="chip">${esc(f.grounding)}</span></td>
+            </tr>`).join("") || `<tr><td colspan="6" class="empty">No facts yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>
     <div id="detail"></div>`;
 
@@ -253,20 +290,21 @@ async function showFact(id, slot) {
   const { fact, relations } = await api("/facts/" + id);
   slot.innerHTML = `
     <div class="card">
-      <b>${esc(fact.subject)}</b> — ${esc(fact.attribute)} =
-      <b>${esc(fact.value_raw)}</b>
-      <div class="src q">${esc(fact.publisher || fact.doc_title)} · page ${fact.evidence_page + 1}
+      <div class="claim"><b>${esc(fact.subject)}</b><span class="sep">—</span>${
+        esc(fact.attribute)}<span class="sep">=</span><b>${esc(fact.value_raw)}</b></div>
+      <div class="q">${esc(fact.publisher || fact.doc_title)} · page ${fact.evidence_page + 1}
         · grounded ${esc(fact.grounding)}</div>
       <blockquote>${esc(fact.evidence_quote)}</blockquote>
-      ${relations.length ? `<details open style="margin-top:10px">
-        <summary>${relations.length} relationship(s)</summary>
-        ${relations.map((r) => `<div style="margin-top:8px">
-          <span class="tag ${r.type}">${r.type.replace(/_/g, " ")}</span>
-          <span class="chip">${esc(r.other_value)}</span>
-          ${r.other_period ? `<span class="chip k">${esc(r.other_period)}</span>` : ""}
-          <span class="q">${esc(r.other_doc)}</span>
-          ${r.explanation ? `<div class="why">${esc(r.explanation)}</div>` : ""}
-        </div>`).join("")}
+      ${relations.length ? `<details open style="margin-top:12px">
+        <summary>${relations.length === 1 ? "1 relationship" : num(relations.length) + " relationships"}</summary>
+        ${relations.map((r) => `
+          <div class="rel-line">
+            <span class="tag ${r.type}">${r.type.replace(/_/g, " ")}</span>
+            <span class="chip">${esc(r.other_value)}</span>
+            ${r.other_period ? `<span class="chip k">${esc(r.other_period)}</span>` : ""}
+            <span class="q">${esc(r.other_doc)}</span>
+          </div>
+          ${r.explanation ? `<div class="why">${esc(r.explanation)}</div>` : ""}`).join("")}
       </details>` : ""}
       <div class="evidence"><img loading="lazy" src="/api/facts/${id}/evidence.png"
         alt="source page with the evidence highlighted"></div>
@@ -285,18 +323,22 @@ async function viewSchema() {
       same measure from different publishers can be compared — but a level is never merged
       with a rate of change.</p>
     <div class="card">
-      <table>
-        <thead><tr><th>Canonical attribute</th><th>Unit family</th><th>Facts</th>
-          <th>Also written as</th></tr></thead>
-        <tbody>${s.attributes.map((a) => `
-          <tr>
-            <td><b>${esc(a.canon_name)}</b></td>
-            <td><span class="chip">${esc(a.unit_family || "—")}</span></td>
-            <td>${a.n_facts}</td>
-            <td class="q">${a.aliases.slice(0, 6).map(esc).join(" · ") || "—"}</td>
-          </tr>`).join("") || `<tr><td colspan="4" class="empty">Nothing yet.</td></tr>`}
-        </tbody>
-      </table>
+      <div class="scroll">
+        <table class="fixed">
+          <colgroup><col style="width:28%"><col style="width:13%"><col style="width:8%">
+            <col style="width:51%"></colgroup>
+          <thead><tr><th>Canonical attribute</th><th>Unit family</th>
+            <th class="num">Facts</th><th>Also written as</th></tr></thead>
+          <tbody>${s.attributes.map((a) => `
+            <tr>
+              <td class="wrap-any"><b>${esc(a.canon_name)}</b></td>
+              <td><span class="chip">${esc(a.unit_family || "—")}</span></td>
+              <td class="num">${num(a.n_facts)}</td>
+              <td class="q wrap-any">${a.aliases.slice(0, 6).map(esc).join(" · ") || "—"}</td>
+            </tr>`).join("") || `<tr><td colspan="4" class="empty">Nothing yet.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>`;
 }
 
@@ -311,39 +353,58 @@ async function viewReview() {
       exactly like a real fact. Low-confidence and fuzzily-matched facts are listed too.</p>
     <div class="card">
       <b>Why extractions were rejected</b>
-      <table style="margin-top:8px">
-        <thead><tr><th>Reason</th><th>Count</th></tr></thead>
-        <tbody>${r.reasons.map((x) => `<tr><td>${esc(x.reason)}</td><td>${x.n}</td></tr>`)
-          .join("") || `<tr><td colspan="2" class="empty">Nothing rejected.</td></tr>`}</tbody>
-      </table>
+      <div class="scroll" style="margin-top:8px">
+        <table class="fixed">
+          <colgroup><col style="width:22%"><col style="width:62%"><col style="width:16%"></colgroup>
+          <thead><tr><th>Reason</th><th>What went wrong</th><th class="num">Count</th></tr></thead>
+          <tbody>${r.reasons.map((x) => `
+            <tr>
+              <td><span class="chip">${esc(x.reason)}</span></td>
+              <td>${esc(x.detail || "—")}</td>
+              <td class="num">${num(x.n)}</td>
+            </tr>`).join("") ||
+            `<tr><td colspan="3" class="empty">Nothing rejected.</td></tr>`}</tbody>
+        </table>
+      </div>
     </div>
     <div class="card">
       <b>Rejected extractions</b>
-      <table style="margin-top:8px">
-        <thead><tr><th>Proposed</th><th>Reason</th><th>Document</th></tr></thead>
-        <tbody>${r.rejected.slice(0, 40).map((x) => `
-          <tr>
-            <td>${esc(x.payload.attribute || "—")} = <b>${esc(x.payload.value || "—")}</b>
-              <div class="q">${esc((x.payload.evidence_quote || "").slice(0, 150))}</div></td>
-            <td><span class="chip">${esc(x.reason)}</span><div class="q">${esc(x.detail || "")}</div></td>
-            <td class="q">${esc(x.doc_title || "—")}</td>
-          </tr>`).join("") || `<tr><td colspan="3" class="empty">Nothing rejected.</td></tr>`}
-        </tbody>
-      </table>
+      <div class="scroll" style="margin-top:8px">
+        <table class="fixed">
+          <colgroup><col style="width:45%"><col style="width:31%"><col style="width:24%"></colgroup>
+          <thead><tr><th>Proposed</th><th>Reason</th><th>Document</th></tr></thead>
+          <tbody>${r.rejected.slice(0, 40).map((x) => `
+            <tr>
+              <td class="wrap-any">${esc(x.payload.attribute || "—")} =
+                <b>${esc(x.payload.value || "—")}</b>
+                <div class="q">${esc((x.payload.evidence_quote || "").slice(0, 150))}</div></td>
+              <td><span class="chip">${esc(x.reason)}</span>
+                <div class="q">${esc(x.detail || "")}</div></td>
+              <td class="q">${esc(x.doc_title || "—")}</td>
+            </tr>`).join("") || `<tr><td colspan="3" class="empty">Nothing rejected.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>
     <div class="card">
       <b>Accepted, but worth a second look</b>
-      <table style="margin-top:8px">
-        <thead><tr><th>Fact</th><th>Confidence</th><th>Grounding</th><th>Document</th></tr></thead>
-        <tbody>${r.low_confidence.map((x) => `
-          <tr data-fact="${x.id}">
-            <td>${esc(x.subject)} — ${esc(x.attribute_raw)} = <b>${esc(x.value_raw)}</b></td>
-            <td>${Number(x.confidence).toFixed(2)}</td>
-            <td><span class="chip">${esc(x.grounding)}</span></td>
-            <td class="q">${esc(x.doc_title)}</td>
-          </tr>`).join("") || `<tr><td colspan="4" class="empty">Nothing flagged.</td></tr>`}
-        </tbody>
-      </table>
+      <div class="scroll" style="margin-top:8px">
+        <table class="fixed">
+          <colgroup><col style="width:46%"><col style="width:13%"><col style="width:13%">
+            <col style="width:28%"></colgroup>
+          <thead><tr><th>Fact</th><th class="num">Confidence</th>
+            <th>Grounding</th><th>Document</th></tr></thead>
+          <tbody>${r.low_confidence.map((x) => `
+            <tr data-fact="${x.id}">
+              <td class="wrap-any">${esc(x.subject)} — ${esc(x.attribute_raw)} =
+                <b>${esc(x.value_raw)}</b></td>
+              <td class="num">${Number(x.confidence).toFixed(2)}</td>
+              <td><span class="chip">${esc(x.grounding)}</span></td>
+              <td class="q">${esc(x.doc_title)}</td>
+            </tr>`).join("") || `<tr><td colspan="4" class="empty">Nothing flagged.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
     </div>
     <div id="detail"></div>`;
 }

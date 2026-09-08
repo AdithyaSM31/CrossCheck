@@ -11,6 +11,7 @@ shape of the knowledge layer is legible in one place.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -236,3 +237,33 @@ def session(path: Path | None = None) -> Iterator[sqlite3.Connection]:
 def js(value: Any) -> str:
     """JSON-encode for a TEXT column."""
     return json.dumps(value, ensure_ascii=False, default=str)
+
+
+# One rejection detail carries the offending digits so a single case can be diagnosed
+# ("value digits '56' not present in the quoted evidence", from ground/verify.py). That
+# is the right text on an individual row and the wrong text in a summary, where it
+# splinters one failure mode into hundreds of one-line entries.
+_DIGIT_DETAIL = re.compile(r"^value digits '.*' not present in the quoted evidence$")
+
+
+def rejection_summary(conn: sqlite3.Connection) -> list[dict]:
+    """Rejections grouped by what actually went wrong, commonest first.
+
+    Grouped by reason *and* detail: "ungrounded" alone hides the distinction that
+    matters, between a quote that was never in the document and a real quote carrying
+    a number that is not in it. The second is the failure that looks exactly like a
+    fact, and it is the one worth counting separately.
+    """
+    tally: dict[tuple[str, str], int] = {}
+    for row in conn.execute(
+        "SELECT reason, detail, COUNT(*) n FROM rejected_facts GROUP BY reason, detail"
+    ):
+        detail = (row["detail"] or "").strip()
+        if _DIGIT_DETAIL.match(detail):
+            detail = "value not present in the quoted evidence"
+        key = (row["reason"], detail)
+        tally[key] = tally.get(key, 0) + row["n"]
+    return [
+        {"reason": reason, "detail": detail, "n": n}
+        for (reason, detail), n in sorted(tally.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]

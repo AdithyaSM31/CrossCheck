@@ -112,10 +112,11 @@ python -m crosscheck.cli relations --type DERIVED_CONSISTENT --query "2,076" --l
 
 ## 7 · Case 4 — what it gets wrong — 2:25–2:50
 
-**Screen:** **Review** tab. The rejection-reason table is at the top.
+**Screen:** **Review** tab. The rejection table is at the top: reason, what went wrong,
+count — 811 / 341 / 109 down the "ungrounded" rows.
 
 > "Which is the point of this screen. Fourteen hundred proposed facts were refused — eight
-> hundred where the quote wasn't in the source at all, and a hundred and sixty-eight where
+> hundred where the quote wasn't in the source at all, and three hundred and forty where
 > the quote was real but the number wasn't in it. That second kind is the dangerous one.
 > Reading this screen is how most of this got fixed — five real bugs, including one that
 > silently merged 'revenue' with 'percentage of revenue' across the whole vocabulary."

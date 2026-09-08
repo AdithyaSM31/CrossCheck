@@ -27,6 +27,20 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
 
 
+# Only for display. Matching is on the host, so a self-hosted or unknown endpoint
+# falls through to the host itself rather than being mislabelled.
+_VENDORS = (
+    ("openai.com", "OpenAI"),
+    ("anthropic.com", "Anthropic"),
+    ("cerebras.ai", "Cerebras"),
+    ("groq.com", "Groq"),
+    ("openrouter.ai", "OpenRouter"),
+    ("together.xyz", "Together"),
+    ("localhost", "local"),
+    ("127.0.0.1", "local"),
+)
+
+
 @dataclass(frozen=True)
 class RoleConfig:
     """How one role (extraction or reasoning) talks to a model."""
@@ -45,10 +59,36 @@ class RoleConfig:
     def configured(self) -> bool:
         return bool(self.api_key and self.model)
 
+    @property
+    def host(self) -> str:
+        return self.base_url.split("//")[-1].split("/")[0] or "?"
+
+    @property
+    def vendor(self) -> str:
+        """A short human name for the endpoint, for the UI header.
+
+        Falls back to the bare host, so an endpoint nobody anticipated still reads
+        sensibly rather than showing nothing.
+        """
+        host = self.host
+        for needle, name in _VENDORS:
+            if needle in host:
+                return name
+        return host.removeprefix("api.")
+
     def describe(self) -> str:
-        host = self.base_url.split("//")[-1].split("/")[0] or "?"
         effort = f" (reasoning={self.reasoning_effort})" if self.reasoning_effort else ""
-        return f"{self.role}: {self.model} via {host}{effort}"
+        return f"{self.role}: {self.model} via {self.host}{effort}"
+
+    def summary(self) -> dict:
+        """The same facts as describe(), but in parts the UI can lay out itself."""
+        return {
+            "role": self.role,
+            "model": self.model,
+            "vendor": self.vendor,
+            "host": self.host,
+            "effort": self.reasoning_effort,
+        }
 
     def extra_body(self) -> dict:
         return {"reasoning_effort": self.reasoning_effort} if self.reasoning_effort else {}

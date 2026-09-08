@@ -8,18 +8,22 @@
 </head>
 <body>
   <header>
-    <div class="brand">
-      <h1>CrossCheck</h1>
-      <span>facts, grounded in their documents, compared across them</span>
-      <span class="health" id="health"></span>
+    <div class="wrap">
+      <div class="brand">
+        <div class="brand-name">
+          <h1>CrossCheck</h1>
+          <p>Facts, grounded in their documents, compared across them.</p>
+        </div>
+        <div class="models" id="health"></div>
+      </div>
+      <nav id="nav">
+        <button data-view="documents" aria-current="true">Documents</button>
+        <button data-view="findings">Findings <span class="count" id="c-findings"></span></button>
+        <button data-view="facts">Facts <span class="count" id="c-facts"></span></button>
+        <button data-view="schema">Schema <span class="count" id="c-schema"></span></button>
+        <button data-view="review">Review <span class="count" id="c-review"></span></button>
+      </nav>
     </div>
-    <nav id="nav">
-      <button data-view="documents" aria-current="true">Documents</button>
-      <button data-view="findings">Findings <span class="count" id="c-findings"></span></button>
-      <button data-view="facts">Facts <span class="count" id="c-facts"></span></button>
-      <button data-view="schema">Schema <span class="count" id="c-schema"></span></button>
-      <button data-view="review">Review <span class="count" id="c-review"></span></button>
-    </nav>
   </header>
   <main id="main"></main>
   <script src="app.js"></script>

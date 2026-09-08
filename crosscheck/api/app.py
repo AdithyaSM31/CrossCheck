@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from ..config import settings
-from ..db import session
+from ..db import rejection_summary, session
 from ..ingest.pipeline import ingest
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -326,13 +326,7 @@ def schema() -> dict:
 def review(limit: int = Query(100, le=500)) -> dict:
     """Everything the system declined to believe, and why."""
     with session() as conn:
-        reasons = [
-            dict(r)
-            for r in conn.execute(
-                """SELECT reason, COUNT(*) n FROM rejected_facts
-                   GROUP BY reason ORDER BY n DESC"""
-            )
-        ]
+        reasons = rejection_summary(conn)
         items = []
         for r in conn.execute(
             """SELECT rf.*, COALESCE(d.title, d.filename) doc_title, b.page_no
@@ -376,12 +370,28 @@ def evidence_image(fact_id: int) -> Response:
 
 @app.get("/api/health")
 def health() -> dict:
+    roles = [r for r in (settings.extract, settings.reason) if r.configured]
     return {
         "ok": True,
+        "models": [r.summary() for r in roles],
+        # The flat strings stay for anyone scripting against this endpoint.
         "extract": settings.extract.describe() if settings.extract.configured else None,
         "reason": settings.reason.describe() if settings.reason.configured else None,
     }
 
 
 if WEB.exists():
-    app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
+    class FreshFiles(StaticFiles):
+        """Serve the UI with revalidation rather than heuristic caching.
+
+        There is no build step and so no content-hashed filenames; without this a
+        browser is free to keep a stale app.js for hours after an edit. ETags still
+        do the real work -- an unchanged file answers 304, not a re-download.
+        """
+
+        def file_response(self, *args, **kwargs) -> Response:
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+    app.mount("/", FreshFiles(directory=WEB, html=True), name="web")

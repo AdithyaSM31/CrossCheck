@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 from .config import settings
-from .db import session
+from .db import rejection_summary, session
 from .ingest.pipeline import ingest
 
 
@@ -186,10 +186,8 @@ def _cmd_facts(args: argparse.Namespace) -> int:
 def _cmd_review(args: argparse.Namespace) -> int:
     with session() as conn:
         print("== rejection reasons ==")
-        for r in conn.execute(
-            "SELECT reason, COUNT(*) n FROM rejected_facts GROUP BY reason ORDER BY n DESC"
-        ):
-            print(f"  {r['n']:>5}  {r['reason']}")
+        for r in rejection_summary(conn):
+            print(f"  {r['n']:>5}  {r['reason']:<14} {r['detail']}")
         print("\n== sample rejections ==")
         for r in conn.execute(
             "SELECT * FROM rejected_facts ORDER BY id DESC LIMIT ?", (args.limit,)
