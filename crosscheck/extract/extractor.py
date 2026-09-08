@@ -157,7 +157,7 @@ async def extract_block(
                 f"Published: {doc['published_on']}" if doc.get("published_on") else ""
             ),
         )
-        resp = await client.complete(SYSTEM, prompt, max_tokens=4000)
+        resp = await client.complete(SYSTEM, prompt, max_tokens=8000)
         payload = parse_json(resp.text)
         conn.execute(
             "INSERT OR REPLACE INTO llm_cache (key, kind, response, model) VALUES (?,?,?,?)",

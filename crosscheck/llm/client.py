@@ -159,7 +159,50 @@ def parse_json(text: str) -> object:
                 return json.loads(attempt)
             except json.JSONDecodeError as exc:
                 last = exc
+    # Last resort: the reply was cut off mid-array because the model ran out of output
+    # budget. A wide table implies hundreds of facts, and losing every one of them because
+    # the final object is half-written is a bad trade — keep the complete elements.
+    salvaged = salvage_truncated(text)
+    if salvaged is not None:
+        return salvaged
     raise LLMError(f"could not parse JSON: {last}") from last
+
+
+def salvage_truncated(text: str) -> object | None:
+    """Recover the complete elements of a JSON array that was cut off mid-write."""
+    start = text.find("[")
+    if start == -1:
+        return None
+
+    depth, in_string, escaped = 0, False, False
+    complete_at: list[int] = []
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 1:  # an element of the outer array just closed cleanly
+                complete_at.append(i)
+            elif depth == 0:
+                break
+
+    if not complete_at:
+        return None
+    try:
+        return json.loads(text[start : complete_at[-1] + 1] + "]")
+    except json.JSONDecodeError:
+        return None
 
 
 # --------------------------------------------------------------------------- the client
@@ -223,13 +266,18 @@ class LLMClient:
 
         body = {
             "model": self.cfg.model,
-            "max_tokens": max_tokens,
-            "temperature": 0,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         }
+        # Reasoning-family models take a different budget parameter and reject a
+        # temperature override; everything else takes the classic pair.
+        if re.match(r"^(gpt-5|o[1-9])", self.cfg.model):
+            body["max_completion_tokens"] = max_tokens
+        else:
+            body["max_tokens"] = max_tokens
+            body["temperature"] = 0
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         body.update(self.extra_body)

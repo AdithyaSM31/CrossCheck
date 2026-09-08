@@ -196,6 +196,44 @@ def _pack(items: list[tuple[str, tuple]], section: str) -> list[tuple[str, tuple
     return packed
 
 
+TABLE_CHUNK_CHARS = 1500
+
+
+def _split_table(rows: list[dict], caption: str) -> list[str]:
+    """Render a table as one or more blocks, each small enough to answer in full.
+
+    The caption travels with every chunk, and so does the section banner in force when the
+    chunk starts — banners carry the unit and basis ("Balance of payments (in billions of
+    U.S. dollars)"), and a chunk that begins mid-section would otherwise lose them.
+    """
+    chunks: list[str] = []
+    current: list[dict] = []
+    banner: dict | None = None
+    size = 0
+
+    def flush() -> None:
+        nonlocal current, size
+        if not any(not r.get("section") for r in current):
+            current, size = [], 0
+            return
+        head = [] if not banner or banner in current else [banner]
+        chunks.append(render_table(head + current, caption))
+        current, size = [], 0
+
+    for row in rows:
+        rendered = len(str(row.get("label", ""))) + sum(
+            len(k) + len(v) + 2 for k, v in row.get("cells", {}).items()
+        )
+        if current and size + rendered > TABLE_CHUNK_CHARS:
+            flush()
+        if row.get("section"):
+            banner = row
+        current.append(row)
+        size += rendered
+    flush()
+    return chunks
+
+
 # ---------------------------------------------------------------------------- entry point
 def build_blocks(pages: list[Page]) -> list[Block]:
     page_lines = [build_lines(p.words) for p in pages]
@@ -248,20 +286,28 @@ def build_blocks(pages: list[Page]) -> list[Block]:
                 continue
 
             taken.update(range(start, end + 1))
-            ok, why = classify(text, "table")
             bbox = (
                 min(l.bbox[0] for l in region), min(l.bbox[1] for l in region),
                 max(l.bbox[2] for l in region), max(l.bbox[3] for l in region),
             )
-            out.append(
-                Block(
-                    page_no=page.page_no, ordinal=ordinal, kind="table", text=text,
-                    bbox=bbox, section_path=stack.path(),
-                    context={"footnotes": notes, "n_rows": len(rows), "page_label": label},
-                    extractable=ok, skip_reason=why,
+            # A wide table implies a fact per cell, so a forty-row six-column table asks for
+            # two hundred and forty of them in one reply. Models run out of output budget
+            # part-way and return JSON that ends mid-object, losing the entire table --
+            # which is exactly what happened to the most important table in this corpus.
+            # Splitting bounds the work per call; each chunk repeats the caption so the
+            # rows keep their context.
+            for chunk in _split_table(rows, caption):
+                ok, why = classify(chunk, "table")
+                out.append(
+                    Block(
+                        page_no=page.page_no, ordinal=ordinal, kind="table", text=chunk,
+                        bbox=bbox, section_path=stack.path(),
+                        context={"footnotes": notes, "n_rows": len(rows),
+                                 "page_label": label},
+                        extractable=ok, skip_reason=why,
+                    )
                 )
-            )
-            ordinal += 1
+                ordinal += 1
 
         prose = [ln for i, ln in enumerate(lines) if i not in taken]
         prose = [ln for ln in prose if ln.text.strip() not in note_set]
