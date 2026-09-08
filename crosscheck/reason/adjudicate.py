@@ -191,12 +191,35 @@ async def reconcile(
     clusters = build_clusters(facts)
     stats.clusters = len(clusters)
 
+    # Every rule-decided relation is idempotent to re-derive (rules are a pure function of
+    # the facts, and _store's INSERT OR IGNORE makes re-storing one free), so re-running
+    # reconcile after a new document arrives is safe to repeat over the whole corpus for
+    # those. An LLM adjudication is not idempotent in cost: without this check, uploading
+    # one more document would re-collect every already-decided ambiguous pair from the
+    # entire corpus into `pending` and pay for every one of them again, which is exactly
+    # the "rebuilding all existing knowledge" the incremental-ingest design is meant to
+    # avoid. One cheap query up front is enough to skip anything already settled.
+    with session() as conn:
+        # Normalised to (min id, max id): SUPERSEDES is stored in chronological rather
+        # than id order (see _store), so the raw fact_a/fact_b columns are not
+        # consistently sorted and comparing against them directly would miss exactly the
+        # supersession pairs this check most needs to catch.
+        already_asked = {
+            (min(r["fact_a"], r["fact_b"]), max(r["fact_a"], r["fact_b"]))
+            for r in conn.execute(
+                "SELECT fact_a, fact_b FROM relations WHERE decided_by = 'llm'"
+            )
+        }
+
     pending: list[tuple[FactView, FactView, rules.Verdict]] = []
 
     with session() as conn:
         for cluster in clusters.values():
             for a, b in candidate_pairs(cluster):
                 stats.pairs += 1
+                pair_key = (a.id, b.id) if a.id < b.id else (b.id, a.id)
+                if pair_key in already_asked:
+                    continue
                 verdict = rules.classify(a, b)
                 if verdict.label:
                     if _store(
