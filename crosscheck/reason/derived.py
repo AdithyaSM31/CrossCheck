@@ -20,6 +20,7 @@ figures sharing a period, some pair will divide into some percentage by chance; 
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from ..normalize.periods import relation, PeriodRelation
@@ -29,6 +30,22 @@ from .keys import normalise_phrase
 TOLERANCE = 0.06  # relative; sources round their own ratios
 _STOPWORDS = {"total", "net", "gross", "value", "amount", "rate", "growth", "margin",
               "share", "ratio", "yoy", "change", "increase", "percentage", "per", "cent"}
+
+# Attribute names this generic carry no information about what the number actually is --
+# they are what an extractor writes when it is uncertain, not a real measure's name. A
+# denominator drawn from a same-period, same-unit pool of candidates only needs to be
+# numerically convenient to produce a "match": "rights plan expense" / "other line" landed
+# within tolerance of a stated volatility percentage on the real corpus, purely because
+# "other line" was free to be paired with anything. _related() alone does not catch this --
+# the working EBITDA-margin case has NO word overlap between "ebitda" and "revenue from
+# services" either, so tightening word-overlap would break the good case along with the bad
+# one. What actually distinguishes them is that "other line" names nothing; general
+# boilerplate terms common to any financial document, not specific to this corpus.
+_GENERIC_LABELS = {
+    "value", "amount", "total", "other", "other line", "note", "footnote", "section",
+    "reference", "data", "figure", "number", "level", "period", "item", "line", "detail",
+    "particulars", "description", "remarks", "miscellaneous", "unlabelled row",
+}
 
 
 @dataclass
@@ -61,16 +78,30 @@ def _is_percent(f: FactView) -> bool:
 
 
 MIN_EVIDENCE_CHARS = 18
+# A single legitimate value never contains more than one number: "Rs. 8,142 Cr" and
+# "(6.3%)" both match once. Two or more matches means several table cells were copied into
+# one "value" string without the "=" and ";" punctuation extraction/extractor.py's own
+# row-dump guard looks for -- "216.68 16.24 16.33 9.75 9.58" is exactly this shape, and
+# doing arithmetic with it produced a real, live false corroboration: 33,836 divided by the
+# first of five concatenated numbers, reported as matching a target that was itself a whole
+# sentence with a percentage buried inside it. Rejecting these here is cheaper and more
+# targeted than trying to extend the extraction-time guard to cover every punctuation-free
+# variant of the same failure.
+_MULTI_NUMBER = re.compile(r"-?\(?\d[\d,]*\.?\d*\)?%?")
 
 
 def _usable(f: FactView) -> bool:
-    """Facts whose evidence is a bare fragment are excluded from arithmetic.
+    """Facts whose evidence or value is unsafe to do arithmetic with.
 
     A garbled table row produces values like "173" quoted as "(Rs.: FY24=8%; Services
     revenue=173". Those divide into some percentage as readily as real ones, and the result
     is a confident-looking corroboration built on a parsing failure.
     """
-    return len(f.evidence_quote or "") >= MIN_EVIDENCE_CHARS
+    if len(f.evidence_quote or "") < MIN_EVIDENCE_CHARS:
+        return False
+    if len(_MULTI_NUMBER.findall(f.value_raw or "")) > 1:
+        return False
+    return normalise_phrase(f.attribute) not in _GENERIC_LABELS
 
 
 def _is_level(f: FactView) -> bool:

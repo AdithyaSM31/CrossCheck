@@ -99,3 +99,44 @@ def test_derivations_work_across_documents():
     found = find_all(facts)
     assert found and found[0].target.doc_id == 3
     assert {p.doc_id for p in found[0].parts} == {2}
+
+
+def test_a_row_dump_without_punctuation_is_not_used_as_a_denominator():
+    """Regression for a real false corroboration found on the live corpus: a table row
+    copied as "216.68 16.24 16.33 9.75 9.58" -- no '=' or ';', so it slips past
+    extraction's own row-dump guard -- was used as a denominator, and parse_value's
+    first-number-only reading (216.68) happened to divide into something close enough to
+    an unrelated target to look like a match. No legitimate single value contains more
+    than one number."""
+    facts = [
+        mk("share capital breakdown", "216.68 16.24 16.33 9.75 9.58", period="FY24"),
+        mk("post-offer paid up capital", "14.84%", period="FY24"),
+        mk("some other level", "1,450.02", period="FY24"),
+    ]
+    assert find_ratios(facts) == []
+
+
+def test_a_generic_attribute_label_is_never_used_as_a_denominator():
+    """Regression for a real false corroboration: 'rights plan expense' divided by a
+    fact labelled only 'other line' landed within tolerance of a stated volatility
+    percentage -- purely because 'other line' is free to pair with anything, since it
+    names nothing. _related() alone does not catch this: the genuine EBITDA-margin case
+    has no word overlap between 'ebitda' and 'revenue from services' either, so the guard
+    has to target vagueness specifically, not tighten word-overlap generally."""
+    facts = [
+        mk("rights plan expense", "40.99", period="FY24"),
+        mk("other line", "94.13", period="FY24"),
+        mk("expected volatility", "43.48%", period="FY24"),
+    ]
+    assert find_ratios(facts) == []
+
+
+def test_generic_labels_do_not_break_the_genuine_ebitda_case():
+    """The guard must be specific to vague labels, not so broad it damages the case it
+    exists to protect."""
+    facts = [
+        mk("ebitda", "₹127 Cr", period="FY24"),
+        mk("revenue from services", "₹8,142 Cr", period="FY24"),
+        mk("ebitda margin", "1.6%", period="FY24"),
+    ]
+    assert find_ratios(facts)
