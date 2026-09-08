@@ -3,10 +3,12 @@
 Everything below is verified against the committed sample database. Every search term and
 command was run and returns exactly what the script says it does.
 
-**Spoken words are the hard budget**, not the number of things to click. The script is 457
-words: about 2:45 at a brisk demo pace (~165 wpm), leaving ~15 seconds for navigation
-pauses. If you run long, drop segment 2's third sentence, then segment 8 entirely — the
-four cases and the evidence shot are what's actually being marked.
+**Spoken words are the hard budget**, not the number of things to click. The script is 479
+words: about 2:54 at a brisk demo pace (~165 wpm). That leaves almost nothing for
+navigation pauses, so it is written to be cut. Drop, in this order: the second half of
+segment 1's sentence (everything after "Indian economy"), segment 2's third sentence, then
+segment 8's first two sentences. The four cases and the evidence shot are what's being
+marked; everything else is padding you can lose without losing a requirement.
 
 ## Before you hit record
 
@@ -16,7 +18,8 @@ cp samples/crosscheck.sample.db data/crosscheck.db      # the real, populated ru
 python -m uvicorn crosscheck.api.app:app --port 8077
 ```
 
-- Open <http://localhost:8077> — land on **Documents**.
+- Open <http://localhost:8077> — land on **Documents**. The header reads your live
+  `.env`, so it will name whichever models you have configured.
 - Open a second terminal, `cd crosscheck`, ready for the CLI shots.
 - Have one PDF in your file picker ready to drag (any of `starter-datasets/**`, or an
   unrelated PDF — it works on documents it has never seen, which is worth saying).
@@ -26,19 +29,25 @@ python -m uvicorn crosscheck.api.app:app --port 8077
 
 ## 1 · Open — 0:00–0:15
 
-**Screen:** Documents tab. The six documents and the stat row are visible.
+**Screen:** Documents tab. The header names both models; the stat strip reads
+6 · 7,750 · 3,618 · 4,579 · 1,382; the six documents are listed below it.
 
 > "This is CrossCheck. It reads PDFs, ties every fact to the exact words that support it,
 > and works out when facts agree, disagree, or only *look* like they disagree. Six
-> documents here — Delhivery filings and three reports on the Indian economy — about seven
-> and a half thousand facts."
+> documents — Delhivery filings and three reports on the Indian economy — seven and a half
+> thousand facts, and three and a half thousand attributes it discovered on its own."
+
+*(The two lines top right are the two model roles: extraction and reasoning are configured
+separately, and run on different providers here. Don't stop to explain it — segment 8
+picks it up if you have room.)*
 
 ---
 
 ## 2 · A PDF going in — 0:15–0:35
 
-**Screen:** Drag a PDF onto the drop zone. Progress bar starts, stage label moves through
-`ingesting` → `identifying` → `extracting: n/N`.
+**Screen:** Drag a PDF onto the drop zone. A progress bar appears under it with the
+filename, the stage — `ingesting` → `identifying` → `extracting` — and an `n / N blocks`
+chip that ticks upward.
 
 > "Drop in a PDF and the whole thing runs — layout rebuilt from word positions, facts
 > extracted, each one checked against the source, then compared against everything already
@@ -50,9 +59,12 @@ python -m uvicorn crosscheck.api.app:app --port 8077
 
 ## 3 · Grounding — the core claim — 0:35–1:05
 
-**Screen:** **Facts** tab → type `8,142` in search → click the first row
-(`revenue from services = ₹8,142 Cr`). The detail panel opens with the quote, the
-relationships, and the highlighted page image.
+**Screen:** **Facts** tab → type `8,142` in search (the chip on the right reads
+`11 matching`) → click the first row, `revenue from services · ₹8,142 Cr`. The panel opens
+below the table with the quote, three relationships, and the highlighted page image.
+
+*Point at the **Grounding** column as you say the second sentence — every row reads
+`verbatim`.*
 
 > "Every fact had to survive two checks: its quote has to actually appear in the source
 > text, and the number has to appear inside that quote. That second check is the one that
@@ -98,9 +110,14 @@ python -m crosscheck.cli relations --type DERIVED_CONSISTENT --query "2,076" --l
 
 ## 6 · Case 2 — a genuine disagreement — 1:55–2:25
 
-**Screen:** Back to the browser, **Facts** tab. Search `real gdp grew` → one result
-(IMF, 6.5%, FY2024-25). Then clear and search `advance estimates` → first result
-(Economic Survey, 6.4%, FY2024-25).
+**Screen:** Back to the browser, **Facts** tab. Search `real gdp grew` → `1 matching`,
+`real gdp growth (percent) · 6.5 percent`, qualifier chip `FY2024-25`, source
+International Monetary Fund. Clear it and search `advance estimates` → `5 matching`; the
+first row is the same attribute at `6.4 per cent`, same `FY2024-25` chip, source
+*India Economic Survey 2024-25*.
+
+*The two `FY2024-25` chips are the shot. Same attribute, same period, different numbers —
+put them side by side by leaving the first search on screen a beat before clearing it.*
 
 > "Real GDP growth, same Indian fiscal year. The IMF says 6.5 percent. The Economic Survey
 > says 6.4, and calls it a first advance estimate. Same measure, same twelve months,
@@ -112,8 +129,9 @@ python -m crosscheck.cli relations --type DERIVED_CONSISTENT --query "2,076" --l
 
 ## 7 · Case 4 — what it gets wrong — 2:25–2:50
 
-**Screen:** **Review** tab. The rejection table is at the top: reason, what went wrong,
-count — 811 / 341 / 109 down the "ungrounded" rows.
+**Screen:** **Review** tab. The top table is *Why extractions were rejected* — reason,
+what went wrong, count. The three `ungrounded` rows read 811 / 341 / 109, and the middle
+one is the line to point at: *value not present in the quoted evidence*.
 
 > "Which is the point of this screen. Fourteen hundred proposed facts were refused — eight
 > hundred where the quote wasn't in the source at all, and three hundred and forty where
@@ -125,16 +143,23 @@ count — 811 / 341 / 109 down the "ungrounded" rows.
 
 ## 8 · Close — 2:50–3:00
 
-**Screen:** **Findings** tab, type filter open so the counts show.
+**Screen:** **Findings** tab. Open the type dropdown so the per-type counts show —
+`All types (4,579)`, then CONTRADICTS, RECONCILED BY CONTEXT, CORROBORATES,
+DERIVED CONSISTENT with their own counts. Close it; every card carries a
+`decided by rule` or `decided by llm` note on its top right.
 
-> "Forty-five hundred relationships, and every one records whether a rule or the model
-> decided it. The whole run is committed, so you can browse it without a key."
+> "Forty-five hundred relationships. Rules settle what rules can — periods, units,
+> arithmetic — and the model is asked only where judgement is needed. Every card records
+> which. The whole run is committed, so you can browse it without a key."
 
 ---
 
 ## If you fumble
 
-- **Search returns nothing** — check you copied the sample DB over `data/crosscheck.db`.
+- **The stat strip reads 0s, or the header says no model configured** — you are pointing
+  at the wrong database or an empty `.env`. Copy the sample DB over `data/crosscheck.db`
+  and restart the server; the header and the counts both read live config.
+- **Search returns nothing** — same cause: check the sample DB actually landed.
 - **Evidence image doesn't load** — it needs `starter-datasets/` present; it's committed, so
   just confirm you're running from the repo root.
 - **Upload seems stuck** — expected; it's rate-limited on the free tier. Cut away, that shot
