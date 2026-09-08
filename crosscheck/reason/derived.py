@@ -118,6 +118,24 @@ def _period_key(f: FactView) -> str:
     return p.key() if p else ""
 
 
+# Words that name a ratio-shaped measure, as opposed to a level that merely happens to be
+# expressed as a percent (an inflation rate, a growth figure -- those are find_growth's
+# territory, not a candidate for "some amount divided by some other amount"). Restricting
+# ratio-matching to targets that signal themselves this way closes a real gap the generic-
+# label check does not: on the live corpus, "expected volatility", "post-offer paid up
+# share capital", and "ownership of trucks leased from third-party partners" all matched a
+# same-period, same-subject amount within the 6% tolerance purely by coincidence, because
+# their denominators were specific, real line items -- not generic placeholders -- that
+# simply happened to divide out to the right number. None of those targets describe
+# themselves as a ratio; a genuine margin or share does.
+_RATIO_WORDS = {"margin", "ratio", "percentage", "proportion", "share"}
+
+
+def _signals_ratio(attribute: str) -> bool:
+    words = set(normalise_phrase(attribute).split())
+    return bool(words & _RATIO_WORDS)
+
+
 def find_ratios(facts: list[FactView]) -> list[Derivation]:
     """Percentages that equal one amount divided by another, in the same subject and period."""
     out: list[Derivation] = []
@@ -136,6 +154,8 @@ def find_ratios(facts: list[FactView]) -> list[Derivation]:
             continue
 
         for target in percents:
+            if not _signals_ratio(target.attribute):
+                continue
             best: Derivation | None = None
             for num in levels:
                 if not _related(target.attribute, num.attribute):

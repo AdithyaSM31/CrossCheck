@@ -131,6 +131,21 @@ def test_a_generic_attribute_label_is_never_used_as_a_denominator():
     assert find_ratios(facts) == []
 
 
+def test_a_target_that_does_not_name_itself_a_ratio_is_never_matched():
+    """Regression for real false corroborations on the live corpus: an option's exercise
+    price divided by a deposit account balance matched a stated 'expected volatility'
+    within tolerance, and equity share capital divided by non-current tax assets matched a
+    stated 'post-offer paid up capital' percentage. Neither target describes itself as a
+    ratio -- restricting matching to targets that do (a margin, a share, a percentage of
+    something) closes this without needing a per-corpus blocklist."""
+    facts = [
+        mk("exercise price per share", "509.30", period="FY24"),
+        mk("deposit account balance", "1,200.00", period="FY24"),
+        mk("expected volatility", "43.48%", period="FY24"),
+    ]
+    assert find_ratios(facts) == []
+
+
 def test_generic_labels_do_not_break_the_genuine_ebitda_case():
     """The guard must be specific to vague labels, not so broad it damages the case it
     exists to protect."""
