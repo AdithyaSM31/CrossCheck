@@ -86,6 +86,42 @@ async def test_index_based_matching_survives_duplicate_display_names(db):
 
 
 @pytest.mark.asyncio
+async def test_facts_are_linked_by_raw_text_and_unit_family_together(db):
+    """The same raw attribute text can legitimately carry two different units -- an
+    extractor occasionally mislabels a growth percentage with the level's own attribute
+    name. The final fact-linking step used to match on raw text alone, so whichever
+    canonical group's UPDATE ran last would silently claim every fact sharing that text,
+    including ones whose real unit belonged to a different, correctly-separated group."""
+    with db.session() as conn:
+        _seed(
+            conn,
+            [
+                ("Delhivery", "revenue from services", "currency:INR", "Rs.8,142 Cr"),
+                ("Delhivery", "revenue from services", "percent", "12.7%"),
+            ],
+        )
+
+    fake = FakeClient({"groups": [
+        {"canonical": "revenue from services", "members": [0]},
+        {"canonical": "revenue from services growth", "members": [1]},
+    ]})
+    await consolidate(fake, use_llm=True)
+
+    with db.session() as conn:
+        rows = {
+            r["unit_family"]: r["canon_name"]
+            for r in conn.execute(
+                """SELECT f.unit_family, a.canon_name FROM facts f
+                   JOIN attributes a ON a.id = f.attribute_id"""
+            )
+        }
+    assert rows == {
+        "currency:INR": "revenue from services",
+        "percent": "revenue from services growth",
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_group_the_model_forgets_to_place_is_not_lost(db):
     """If the model's response omits an index, that group keeps its own name rather than
     disappearing from the vocabulary."""

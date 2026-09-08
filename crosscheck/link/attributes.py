@@ -225,12 +225,19 @@ async def consolidate(
     groups = block_attributes(items, vocabulary)
     fresh = [g for g in groups if not g["known"]]
 
-    # canonical name -> the raw attribute strings that map to it
-    mapping: dict[str, list[str]] = {}
+    # canonical name -> the (raw attribute string, unit family) pairs that map to it.
+    # Both fields together, never the raw string alone: the same raw text can legitimately
+    # appear under more than one unit family (an extractor occasionally mislabels a growth
+    # percentage with the level's own attribute name), and blocking already keeps those as
+    # separate items for exactly that reason. Collapsing back to raw-string-only here would
+    # throw that separation away right before the fact linking that is supposed to use it --
+    # a fact whose real unit is "percent" would get attribute_id assigned by whichever
+    # canonical group's raw-string match happened to run last, regardless of its own unit.
+    mapping: dict[str, list[tuple[str, str]]] = {}
     for g in groups:
         if g["known"]:
             mapping.setdefault(g["canon"], []).extend(
-                m["attribute_raw"] for m in g["members"]
+                (m["attribute_raw"], m["unit_family"]) for m in g["members"]
             )
 
     if fresh and use_llm and client is not None:
@@ -242,27 +249,31 @@ async def consolidate(
                 for idx in decided.get("members") or []:
                     g = batch[idx]  # _adjudicate already validated the index range
                     mapping.setdefault(canon, []).extend(
-                        m["attribute_raw"] for m in g["members"]
+                        (m["attribute_raw"], m["unit_family"]) for m in g["members"]
                     )
         # Anything the model failed to place keeps its own name rather than vanishing.
-        placed = {raw for raws in mapping.values() for raw in raws}
+        placed = {pair for pairs in mapping.values() for pair in pairs}
         for g in fresh:
-            missing = [m["attribute_raw"] for m in g["members"] if m["attribute_raw"] not in placed]
+            missing = [
+                (m["attribute_raw"], m["unit_family"])
+                for m in g["members"]
+                if (m["attribute_raw"], m["unit_family"]) not in placed
+            ]
             if missing:
                 mapping.setdefault(g["canon"], []).extend(missing)
     else:
         for g in fresh:
             mapping.setdefault(g["canon"], []).extend(
-                m["attribute_raw"] for m in g["members"]
+                (m["attribute_raw"], m["unit_family"]) for m in g["members"]
             )
 
-    unit_of = {i["attribute_raw"]: i["unit_family"] for i in items}
-
     with session() as conn:
-        for canon, raws in mapping.items():
-            raws = sorted(set(raws))
-            if not raws:
+        for canon, pairs in mapping.items():
+            pairs = sorted(set(pairs))
+            if not pairs:
                 continue
+            raws = sorted({raw for raw, _ in pairs})
+
             row = conn.execute(
                 "SELECT id, aliases_json FROM attributes WHERE canon_name = ?", (canon,)
             ).fetchone()
@@ -278,14 +289,13 @@ async def consolidate(
                 cur = conn.execute(
                     """INSERT INTO attributes (canon_name, aliases_json, unit_family)
                        VALUES (?,?,?)""",
-                    (canon, js(raws), next((unit_of.get(r) for r in raws if unit_of.get(r)), None)),
+                    (canon, js(raws), pairs[0][1] or None),
                 )
                 attr_id = int(cur.lastrowid)
 
-            placeholders = ",".join("?" * len(raws))
-            conn.execute(
-                f"UPDATE facts SET attribute_id = ? WHERE attribute_raw IN ({placeholders})",
-                (attr_id, *raws),
+            conn.executemany(
+                "UPDATE facts SET attribute_id = ? WHERE attribute_raw = ? AND unit_family = ?",
+                [(attr_id, raw, unit) for raw, unit in pairs],
             )
 
         conn.execute(
