@@ -119,6 +119,14 @@ def classify(a: FactView, b: FactView) -> Verdict:
 
     if len(diffs) == 1:
         dim = diffs[0]
+        # A reconciliation is only worth reporting if both sides are stated with some
+        # confidence. The bulk of the noise came from duplicate extractions of the same
+        # figure rather than from weak facts, and deduplicating the fact set upstream
+        # removes it at the source -- a page-proximity filter would also have thrown away
+        # the genuine case where a deck states the year on one page and the quarter on
+        # the next.
+        if min(a.confidence, b.confidence) < 0.5:
+            return Verdict(None)
         if dim == "period":
             return Verdict(
                 RECONCILED, _explain_period(a, b), 0.9, "single differing qualifier: period"

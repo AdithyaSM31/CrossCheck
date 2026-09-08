@@ -237,6 +237,16 @@ def build_blocks(pages: list[Page]) -> list[Block]:
             if len(columns) < (3 if slide else 2) or len(text) < MIN_BLOCK_CHARS:
                 continue
 
+            # If most columns could not be named, the values are bound to nothing and the
+            # whole premise of this representation is gone. That happens on chart slides
+            # whose bar labels look like aligned numbers, and on regions that were never a
+            # table. Passing them on produces facts like "= 12%" that ground perfectly and
+            # mean nothing, and they go on to form confident false corroborations. Falling
+            # back to the raw prose keeps the text without inventing structure for it.
+            unnamed = sum(1 for h in columns if re.fullmatch(r"col\d+", h))
+            if unnamed > len(columns) / 2:
+                continue
+
             taken.update(range(start, end + 1))
             ok, why = classify(text, "table")
             bbox = (

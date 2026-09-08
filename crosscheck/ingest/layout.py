@@ -259,27 +259,38 @@ def reconstruct_table(
     # race and scatters its own words across the column headers. The discriminator is
     # geometry: a header row lives inside the column band, a title spans the page.
     def _slots_for(ln: Line) -> dict[int, list[str]]:
-        inband = [w for w in ln.words if w.x0 >= left_edge]
-        if not ln.words or len(inband) / len(ln.words) < 0.6:
-            return {}
+        """Tokens of this line that sit over a data column.
+
+        Words to the left of the first data column are ignored rather than disqualifying
+        the line: a header row usually opens with the label column's own heading
+        ("Book Running Lead Manager | Contact Person | Telephone"), and requiring most of
+        the line to sit inside the data band threw those rows away — which is how 59% of
+        tables ended up with columns named col1, col2, col3 and values bound to nothing.
+        """
         slots: dict[int, list[str]] = {}
-        for w in inband:
+        for w in ln.words:
+            if w.x0 < left_edge:
+                continue
             ci = col_of(w)
             if ci is not None:
                 slots.setdefault(ci, []).append(w.text)
         return slots
 
-    header_idx, best_slots, best_score = -1, {}, 0
-    for idx, ln in enumerate(lines[:8]):
-        if _numeric_count(ln) >= 2 and not _HEADERISH.search(ln.text):
+    # Search upward from the first row of data. The nearest qualifying line is the header;
+    # a table's title also sits above the body and can contain a year range, so scoring all
+    # candidates equally lets the title outrank the real header and scatter its words across
+    # the columns. Proximity settles it, and costs nothing.
+    body_start = next(
+        (i for i, ln in enumerate(lines) if _numeric_count(ln) >= 2 and not _HEADERISH.search(ln.text)),
+        len(lines),
+    )
+    header_idx, best_slots = -1, {}
+    needed = max(2, (len(cols) + 1) // 2)
+    for idx in range(body_start - 1, max(-1, body_start - 6), -1):
+        slots = _slots_for(lines[idx])
+        if len(slots) >= needed:
+            header_idx, best_slots = idx, slots
             break
-        slots = _slots_for(ln)
-        if len(slots) < 2:
-            continue
-        periodish = sum(1 for toks in slots.values() if _HEADERISH.search(" ".join(toks)))
-        score = len(slots) + 2 * periodish
-        if score > best_score:
-            header_idx, best_slots, best_score = idx, slots, score
 
     headers: list[str] = [""] * len(cols)
     for ci, toks in best_slots.items():
@@ -317,12 +328,11 @@ def reconstruct_table(
             # PDF word extraction splits decimals ("456." + "1"). Two fragments landing in
             # the same cell are one number, so rejoin them without a space.
             have = cells.get(headers[ci], "")
-            glue = (
-                ""
-                if have.endswith((".", ","))
-                or (have[-1:].isdigit() and w.text[:1].isdigit())
-                else " "
-            )
+            # Only rejoin a genuinely split decimal ("456." + "1"). Gluing any two adjacent
+            # digits silently welds values from different columns into one number --
+            # "216.68" and "16.24" became "216.6816.24", a figure that appears in no
+            # document and would have been extracted as fact.
+            glue = "" if have.endswith((".", ",")) else " "
             cells[headers[ci]] = (have + glue + w.text).strip() if have else w.text
             boxes.append((w.x0, w.y0, w.x1, w.y1))
         if not cells:
@@ -334,6 +344,21 @@ def reconstruct_table(
     for i, r in enumerate(rows):
         if not r["label"] and i > 0 and not r.get("section"):
             r["label"] = rows[i - 1]["label"]
+
+    # If any row carries more numbers than we found columns, the column model is
+    # under-fitted for this table and values are landing in the wrong cells. That is worse
+    # than having no table at all: the numbers are real, the bindings are invented, and
+    # everything downstream treats them as evidence. Reject and let the region be read as
+    # prose instead.
+    for r in rows:
+        if r.get("section"):
+            continue
+        for value in r["cells"].values():
+            # Two numbers inside one cell means two columns collapsed into one. A cell
+            # holding several *words* is ordinary ("220+", "1,860 Cr", "n.a."); a cell
+            # holding two numbers is a value that exists in no document.
+            if sum(1 for tok in value.split() if is_numeric_token(tok)) >= 2:
+                return [], ""
 
     caption = " ".join(ln.text for ln in lines[: max(header_idx, 0)]).strip()
     return rows, caption[:300]

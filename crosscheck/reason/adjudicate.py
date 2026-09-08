@@ -20,7 +20,7 @@ from ..db import js, session
 from ..llm.client import LLMClient, LLMError
 from . import rules
 from .derived import find_all
-from .facts import FactView, load_facts
+from .facts import FactView, dedupe, load_facts
 from .keys import differing_components, loose_key
 
 MAX_CLUSTER_PAIRS = 120  # per cluster; guards against a pathological attribute
@@ -168,7 +168,9 @@ async def reconcile(
     stats = ReconcileStats()
 
     with session() as conn:
-        facts = load_facts(conn, "f.value_num IS NOT NULL OR f.value_text IS NOT NULL")
+        facts = dedupe(
+            load_facts(conn, "f.value_num IS NOT NULL OR f.value_text IS NOT NULL")
+        )
     stats.facts = len(facts)
 
     clusters = build_clusters(facts)

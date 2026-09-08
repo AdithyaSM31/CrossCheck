@@ -20,6 +20,8 @@ def mk(
     publisher="Delhivery",
     published_on="2024-05-17",
     confidence=0.9,
+    page=1,
+    evidence=None,
 ):
     parsed = parse_value(value)
     p = parse_period(period) if period else None
@@ -40,8 +42,10 @@ def mk(
             subject=subject, attribute=attribute, period=p,
             scope=scope, basis=basis, unit_family=parsed.unit_family,
         ),
-        evidence_quote=f"... {value} ...",
-        evidence_page=1,
+        # Realistic length: the reconciler ignores facts whose evidence is a bare
+        # fragment, since those are usually parsing failures.
+        evidence_quote=evidence or f"{attribute} for the period stood at {value}.",
+        evidence_page=page,
         confidence=confidence,
         doc_title="doc",
         publisher=publisher,

@@ -58,12 +58,26 @@ def _related(a: str, b: str) -> bool:
 
 
 def _is_percent(f: FactView) -> bool:
-    return f.unit_family == "percent" and f.value_num is not None
+    return f.unit_family == "percent" and f.value_num is not None and _usable(f)
+
+
+MIN_EVIDENCE_CHARS = 18
+
+
+def _usable(f: FactView) -> bool:
+    """Facts whose evidence is a bare fragment are excluded from arithmetic.
+
+    A garbled table row produces values like "173" quoted as "(Rs.: FY24=8%; Services
+    revenue=173". Those divide into some percentage as readily as real ones, and the result
+    is a confident-looking corroboration built on a parsing failure.
+    """
+    return len(f.evidence_quote or "") >= MIN_EVIDENCE_CHARS
 
 
 def _is_level(f: FactView) -> bool:
     return (
-        f.value_num not in (None, 0)
+        _usable(f)
+        and f.value_num not in (None, 0)
         and (f.unit_family.startswith("currency:") or f.unit_family in ("number",)
              or f.unit_family.startswith("quantity:"))
     )
