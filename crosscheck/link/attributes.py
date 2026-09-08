@@ -267,6 +267,32 @@ async def consolidate(
                 (m["attribute_raw"], m["unit_family"]) for m in g["members"]
             )
 
+    # A canonical name is a naming decision made per batch, with no visibility into what
+    # any other batch chose -- so nothing stops the model from independently proposing the
+    # identical text "revenue from services" for a currency-valued level in one batch and a
+    # percent-valued, mislabeled growth figure in another. If left merged, this is not just
+    # untidy: rules.classify() treats "number" and "percent" as comparable units (deliberately,
+    # so a table cell that lost its column-header unit can still be compared), so a colliding
+    # canon spanning both would generate a RECONCILED_BY_CONTEXT relation claiming two
+    # unrelated measures are "the same claim, differing by unit" -- a wrong finding, not
+    # merely an imprecise schema entry. Splitting any canon whose pairs span more than one
+    # unit family, before anything is written, keeps the naming collision from becoming a
+    # reconciliation error.
+    for canon in list(mapping):
+        pairs = mapping[canon]
+        units = {u for _, u in pairs}
+        if len(units) <= 1:
+            continue
+        del mapping[canon]
+        counts = {u: sum(1 for _, x in pairs if x == u) for u in units}
+        # Ties (equally represented units) break alphabetically rather than on set
+        # iteration order, which Python does not guarantee -- deterministic output matters
+        # here since it decides which unit keeps the bare canonical name.
+        primary = min(counts, key=lambda u: (-counts[u], u))
+        for u in units:
+            key = canon if u == primary else f"{canon} ({u.split(':')[-1]})"
+            mapping.setdefault(key, []).extend((r, x) for r, x in pairs if x == u)
+
     with session() as conn:
         for canon, pairs in mapping.items():
             pairs = sorted(set(pairs))

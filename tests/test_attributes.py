@@ -215,6 +215,47 @@ def test_known_vocabulary_seeds_blocking_without_llm():
 
 
 @pytest.mark.asyncio
+async def test_colliding_canonical_names_across_units_are_split(db):
+    """Naming is a per-batch decision, made with no visibility into any other batch's
+    choices -- nothing stops the model from independently proposing the identical text
+    "revenue from services" for a currency-valued level and, elsewhere, a percent-valued
+    figure that was mislabeled with the same raw text. Left merged this is not just
+    untidy: rules.classify() treats "number" and "percent" as comparable units on purpose
+    (so a table cell that lost its column header can still be compared), so a canon
+    spanning both would generate a RECONCILED_BY_CONTEXT relation claiming two unrelated
+    measures are "the same claim, differing by unit" -- a wrong finding, not merely an
+    imprecise schema entry."""
+    with db.session() as conn:
+        _seed(
+            conn,
+            [
+                ("Delhivery", "revenue from services", "currency:INR", "Rs.8,142 Cr"),
+                ("Delhivery", "revenue growth mislabelled", "percent", "12.7%"),
+            ],
+        )
+
+    # The model assigns the SAME canonical text to both, despite them being different
+    # measures -- exactly the collision that must be caught downstream of adjudication.
+    fake = FakeClient({"groups": [
+        {"canonical": "revenue from services", "members": [0]},
+        {"canonical": "revenue from services", "members": [1]},
+    ]})
+    await consolidate(fake, use_llm=True)
+
+    with db.session() as conn:
+        rows = {
+            r["unit_family"]: r["canon_name"]
+            for r in conn.execute(
+                """SELECT f.unit_family, a.canon_name FROM facts f
+                   JOIN attributes a ON a.id = f.attribute_id"""
+            )
+        }
+    assert len(set(rows.values())) == 2, f"units collided under one canonical name: {rows}"
+    assert rows["currency:INR"] == "revenue from services"  # the majority/primary form
+    assert "percent" in rows["percent"]  # disambiguated rather than silently merged
+
+
+@pytest.mark.asyncio
 async def test_adjudicate_uses_fallback_when_model_returns_no_members():
     fake = FakeClient({"groups": [{"canonical": "x"}]})  # no "members" key at all
     batch = [{"canon": "a", "unit_family": "", "members": [{"example": "1"}]}]
