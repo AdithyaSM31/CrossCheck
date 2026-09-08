@@ -9,3 +9,7 @@ data/
 *.db-wal
 *.db-shm
 .cache/
+
+# Sample output is deliberately committed so the submission can be evaluated without an
+# API key -- see samples/README.md.
+!samples/*.db
