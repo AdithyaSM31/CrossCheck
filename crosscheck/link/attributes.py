@@ -33,7 +33,7 @@ from ..llm.client import LLMClient, LLMError
 from ..reason.keys import claim_key, normalise_phrase
 from ..normalize.periods import parse_period
 
-MERGE_THRESHOLD = 90  # string similarity above which variants group without asking
+MERGE_THRESHOLD = 85  # string similarity above which variants group without asking
 BATCH = 40
 
 SYSTEM = """\
@@ -108,6 +108,19 @@ def block_attributes(items: list[dict], vocabulary: dict[str, dict]) -> list[lis
     Attributes already in the vocabulary seed the groups, so a new document's "real gdp
     growth" attaches to the canonical name an earlier document established rather than
     starting a rival one.
+
+    Uses ``token_sort_ratio``, never ``token_set_ratio``. The two look interchangeable and
+    are not: token_set_ratio scores a phrase and its own superset as a perfect match, since
+    it compares token *sets* and a subset is fully "contained" in the larger set. That
+    silently merged "revenue from services" with "capital expenditure as percentage of
+    revenue from services" and "credit growth" with "credit to agriculture growth" at a
+    score of 100 -- a level merged with a ratio built from it, and a growth rate merged
+    with a completely different sector's growth rate. Worse, blocking happens *before* the
+    LLM ever sees these strings, and only one representative example per pre-merged group
+    is shown to it, so a bad merge made here was never something the adjudication step
+    could catch or split back apart. token_sort_ratio still normalises word order but
+    correctly penalises the extra words, scoring every case above around 53-67 rather than
+    100 -- comfortably below MERGE_THRESHOLD.
     """
     groups: list[dict] = []
     for canon, row in vocabulary.items():
@@ -131,7 +144,7 @@ def block_attributes(items: list[dict], vocabulary: dict[str, dict]) -> list[lis
             if g["unit_family"] and unit and g["unit_family"] != unit:
                 continue
             score = max(
-                fuzz.token_set_ratio(name, normalise_phrase(s)) for s in g["surface"]
+                fuzz.token_sort_ratio(name, normalise_phrase(s)) for s in g["surface"]
             )
             if score > best_score:
                 best, best_score = g, score

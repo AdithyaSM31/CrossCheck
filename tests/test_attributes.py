@@ -126,6 +126,46 @@ async def test_malformed_model_response_falls_back_to_original_names(db):
         ).fetchone()["canon_name"] == "ebitda"
 
 
+@pytest.mark.parametrize(
+    "level,ratio_or_other",
+    [
+        ("revenue from services", "capital expenditure as percentage of revenue from services"),
+        ("credit growth", "credit to agriculture growth"),
+        ("ebitda", "ebitda margin"),
+        ("current account deficit", "current account balance"),
+        ("total revenue", "total revenue from operations"),
+    ],
+)
+def test_blocking_never_merges_a_phrase_with_its_own_superset(level, ratio_or_other):
+    """Regression for the most consequential bug found this session. token_set_ratio
+    scores a phrase and any string containing all its words as a perfect match, since it
+    compares token *sets* -- a subset is fully "contained" in the superset regardless of
+    what the extra words mean. That silently merged 'revenue from services' with a
+    *percentage of* itself, and 'credit growth' with a different sector's credit growth,
+    at a real run's scale of thousands of attributes. Worse, only one example per
+    pre-blocked group ever reaches the LLM adjudication step, so a bad merge made here
+    could never be split back apart downstream -- this has to be caught at blocking."""
+    items = [
+        {"attribute_raw": level, "unit_family": "percent", "n": 1, "example": "1"},
+        {"attribute_raw": ratio_or_other, "unit_family": "percent", "n": 1, "example": "2"},
+    ]
+    groups = block_attributes(items, {})
+    assert len(groups) == 2, f"{level!r} and {ratio_or_other!r} were merged"
+
+
+def test_blocking_still_merges_genuine_wording_variants():
+    """The fix must not overcorrect into merging nothing -- these are the same measure,
+    stated differently, and should still collapse into one group for free."""
+    items = [
+        {"attribute_raw": "real gdp growth", "unit_family": "percent", "n": 1, "example": "1"},
+        {"attribute_raw": "real gdp growth rate", "unit_family": "percent", "n": 1, "example": "2"},
+        {"attribute_raw": "growth in real gdp", "unit_family": "percent", "n": 1, "example": "3"},
+    ]
+    groups = block_attributes(items, {})
+    assert len(groups) == 1
+    assert len(groups[0]["members"]) == 3
+
+
 def test_known_vocabulary_seeds_blocking_without_llm():
     """A raw string matching an existing canonical alias should join it via fuzzy
     blocking alone, costing no model call."""
