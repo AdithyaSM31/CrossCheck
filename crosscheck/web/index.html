@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrossCheck — fact knowledge layer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>CrossCheck</h1>
+      <span>facts, grounded in their documents, compared across them</span>
+      <span class="health" id="health"></span>
+    </div>
+    <nav id="nav">
+      <button data-view="documents" aria-current="true">Documents</button>
+      <button data-view="findings">Findings <span class="count" id="c-findings"></span></button>
+      <button data-view="facts">Facts <span class="count" id="c-facts"></span></button>
+      <button data-view="schema">Schema <span class="count" id="c-schema"></span></button>
+      <button data-view="review">Review <span class="count" id="c-review"></span></button>
+    </nav>
+  </header>
+  <main id="main"></main>
+  <script src="app.js"></script>
+</body>
+</html>

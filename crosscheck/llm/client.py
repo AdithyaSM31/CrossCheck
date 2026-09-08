@@ -188,6 +188,8 @@ class LLMClient:
         # reasoning tokens dominate the token-per-minute budget).
         self.extra_body = extra_body or {}
         self.bucket = TokenBucket(tokens_per_minute)
+        # Learned from observed usage, so the reservation tracks whatever model is in use.
+        self.output_allowance = 2200
         self._sem = asyncio.Semaphore(max(1, concurrency))
         self._client = httpx.AsyncClient(timeout=timeout)
 
@@ -278,9 +280,13 @@ class LLMClient:
         started = time.perf_counter()
         last: Exception | None = None
 
-        # Roughly 3.6 characters per token, plus what the reply is likely to cost. Being
-        # approximate is fine; the reservation is reconciled against the real usage after.
-        estimate = int((len(system) + len(user)) / 3.6) + 700
+        # Roughly 3.6 characters per token, plus what the reply is likely to cost. The
+        # output allowance matters more than it looks: a reasoning model bills its thinking,
+        # and this one averages ~2,500 output tokens per extraction. Reserving 700 meant
+        # every worker under-reserved by a factor of four, so the bucket let three of them
+        # through at once and the provider rejected all three. Over-reserving merely idles
+        # briefly; under-reserving costs a retry storm.
+        estimate = int((len(system) + len(user)) / 3.6) + self.output_allowance
 
         async with self._sem:
             await self.bucket.acquire(estimate)
@@ -300,6 +306,14 @@ class LLMClient:
                     self.bucket.reconcile(
                         estimate, resp.input_tokens + resp.output_tokens
                     )
+                    if resp.output_tokens:
+                        # Track a running high-water mark rather than a mean: the cost of
+                        # occasionally over-reserving is a pause, and of under-reserving a
+                        # rejected request.
+                        self.output_allowance = max(
+                            int(self.output_allowance * 0.9),
+                            int(resp.output_tokens * 1.15),
+                        )
                     self.usage.calls += 1
                     self.usage.input_tokens += resp.input_tokens
                     self.usage.output_tokens += resp.output_tokens
