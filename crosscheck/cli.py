@@ -141,7 +141,8 @@ def _cmd_extract(args: argparse.Namespace) -> int:
                     print(f"\r  {stage}: {done}/{total}", end="", flush=True)
 
                 stats = await extract_document(
-                    doc_id, limit=args.limit, progress=progress, client=client
+                    doc_id, limit=args.limit, kind=args.kind,
+                    progress=progress, client=client,
                 )
                 print(f"\r  {stats.summary()}")
         finally:
@@ -372,6 +373,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("extract", help="extract facts with the configured model")
     p.add_argument("doc_id", type=int, nargs="?")
     p.add_argument("--limit", type=int, default=0, help="blocks per document (0 = all)")
+    p.add_argument("--kind", choices=["table", "paragraph"],
+                   help="restrict to one block kind (e.g. re-extract only tables)")
     p.add_argument("--concurrency", type=int, default=0)
     p.add_argument("--max-calls", type=int, default=0, help="hard ceiling on model calls")
     p.add_argument("--no-metadata", action="store_true")

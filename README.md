@@ -24,14 +24,13 @@ cp .env.example .env                              # then add an API key
 Put a key in `.env`. Two roles are configured separately — see *Approach* for why:
 
 ```
-# Extraction: ~700 blocks for the six starter documents, so cost and speed matter more
-# than using the strongest available model.
+# Extraction: the best-measured option, and free.
 CROSSCHECK_EXTRACT_PROVIDER=openai
-CROSSCHECK_EXTRACT_BASE_URL=https://api.openai.com/v1
-CROSSCHECK_EXTRACT_API_KEY=sk-...
-CROSSCHECK_EXTRACT_MODEL=gpt-5-nano
-CROSSCHECK_EXTRACT_REASONING_EFFORT=minimal   # gpt-5-nano spends its whole output
-                                               # budget on reasoning otherwise
+CROSSCHECK_EXTRACT_BASE_URL=https://api.cerebras.ai/v1
+CROSSCHECK_EXTRACT_API_KEY=csk-...
+CROSSCHECK_EXTRACT_MODEL=gpt-oss-120b
+CROSSCHECK_EXTRACT_REASONING_EFFORT=low   # required: at its default the model spends
+                                          # its whole output budget on reasoning
 
 # Reconciliation: a few hundred calls where judgement decides the output.
 CROSSCHECK_REASON_PROVIDER=openai
@@ -40,10 +39,19 @@ CROSSCHECK_REASON_API_KEY=sk-...
 CROSSCHECK_REASON_MODEL=gpt-4.1-mini
 ```
 
-Groq's free tier (`openai/gpt-oss-120b`, `CROSSCHECK_EXTRACT_BASE_URL=https://api.groq.com/openai/v1`)
-works too and scored *higher* on grounding in early pilots, but is capped at 200,000
-tokens/day — below what this corpus needs in one sitting. `.env.example` has both configured,
-commented, with the trade-off explained.
+Extraction models were chosen by measurement, on an identical 30-block sample from this
+corpus, not by reputation or price:
+
+| Model | Grounded | Wide-table decomposition |
+|---|---|---|
+| **`gpt-oss-120b`** (Cerebras, free) | **429/429 — 100%** | correct: one fact per cell, right period on each |
+| `gpt-5-nano` (OpenAI, ~$0.50/corpus) | 338/401 — 84% | copies whole rows back as one value |
+| `gpt-4o-mini` | 66–90% | failed to read the corpus's central table at all |
+| `gpt-4.1-mini` | 53% | truncated `₹2,076 Cr` to `76 Cr` |
+
+Cerebras' free tier allows 1M tokens/day but only 150 requests/hour, so a full ~700-block
+corpus spans more than one day; the content-addressed cache makes resuming free.
+`.env.example` documents all three options with the trade-offs.
 
 Start the server:
 

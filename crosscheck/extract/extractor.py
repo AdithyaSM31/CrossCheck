@@ -304,10 +304,18 @@ async def extract_document(
     doc_id: int,
     *,
     limit: int = 0,
+    kind: str | None = None,
     progress: Progress | None = None,
     client: LLMClient | None = None,
 ) -> ExtractStats:
-    """Extract facts for one ingested document."""
+    """Extract facts for one ingested document.
+
+    ``kind`` restricts the run to one class of block ("table", "paragraph"). Extraction
+    quality is not uniform across those classes -- a wide table asks far more of a model
+    than a paragraph does, and models differ much more sharply on it -- so being able to
+    re-extract just the tables with a better model, without re-paying for prose that was
+    already fine, is worth the one extra parameter.
+    """
     stats = ExtractStats()
 
     with session() as conn:
@@ -316,8 +324,10 @@ async def extract_document(
         )
         rows = conn.execute(
             """SELECT id, page_no, kind, text, section_path, context_json, sha256
-                 FROM blocks WHERE doc_id = ? AND extractable = 1 ORDER BY ordinal""",
-            (doc_id,),
+                 FROM blocks
+                WHERE doc_id = ? AND extractable = 1 AND (? IS NULL OR kind = ?)
+                ORDER BY ordinal""",
+            (doc_id, kind, kind),
         ).fetchall()
 
     blocks = []
