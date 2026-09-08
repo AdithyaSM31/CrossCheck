@@ -301,10 +301,20 @@ def _narrate_rule_relations() -> None:
         updates = []
         for r in rows:
             if r["type"] == rules.CORROBORATES:
-                text = (
-                    f"{r['srca']} reports {r['va']} and {r['srcb']} reports {r['vb']} "
-                    f"for the same claim; the values agree."
-                )
+                # A discriminator is present when the two facts' full claim keys differ
+                # (e.g. one reports consolidated, the other standalone) but the values
+                # still happen to agree -- worth saying explicitly, since "they agree" on
+                # its own reads as though the claims were identical in every respect.
+                if r["discriminator"]:
+                    text = (
+                        f"{r['srca']} reports {r['va']} and {r['srcb']} reports {r['vb']}. "
+                        f"These differ by {r['discriminator']}, but the values still agree."
+                    )
+                else:
+                    text = (
+                        f"{r['srca']} reports {r['va']} and {r['srcb']} reports {r['vb']} "
+                        f"for the same claim; the values agree."
+                    )
             elif r["type"] == rules.RECONCILED:
                 dim = r["discriminator"] or "context"
                 pairs = {
