@@ -1,9 +1,9 @@
 # Sample output
 
 `crosscheck.sample.db` is the real, fully-populated database from the run that produced this
-submission: all six starter documents ingested and extracted (5,835 grounded facts), the
-attribute vocabulary consolidated (~3,300 canonical attributes), and reconciliation run
-against the whole corpus (~650 relations — corroborations, contradictions, context-explained
+submission: all six starter documents ingested and extracted (7,750 grounded facts), the
+attribute vocabulary consolidated (3,618 canonical attributes), and reconciliation run
+against the whole corpus (4,579 relations — corroborations, contradictions, context-explained
 reconciliations, and derived-value matches). It costs nothing to explore and needs no API
 key.
 

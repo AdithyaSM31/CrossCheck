@@ -288,13 +288,14 @@ only its facts get compared, at near-zero added cost thanks to the idempotency f
 
 ## Additional notes
 
-**Cost.** The full six-document corpus — 696 extraction blocks, ~5,800 grounded facts,
-~3,300 canonical attributes, ~650 relations — cost roughly **$1.90** in API spend across
-extraction (`gpt-5-nano`), vocabulary consolidation and reconciliation (`gpt-4.1-mini`),
-including the cost of the pilots that chose those models and of re-running stages after each
-correctness fix described above. Groq's free tier handled extraction for smaller runs at
-$0.00 and scored higher on grounding; it is not used for the committed run only because its
-daily quota does not cover this corpus in one sitting.
+**Cost.** The full six-document corpus — 696 extraction blocks, 7,750 grounded facts,
+3,618 canonical attributes, 4,579 relations — cost roughly **$2.25** in API spend, and would
+cost far less to reproduce. Extraction of all 193 table blocks (the hard part, and the bulk
+of the facts) ran on Cerebras' free tier at **$0.00**; the paid spend is prose extraction
+(`gpt-5-nano`, ~$0.46), vocabulary consolidation and reconciliation (`gpt-4.1-mini`), plus
+the pilots that chose those models and the re-runs after each correctness fix described
+above. Extracting the whole corpus on Cerebras rather than just its tables would bring
+extraction to zero, at the cost of spanning more than one day against its 1M token/day cap.
 
 **On finding bugs by running the system, not just by writing it.** Several of the fixes in
 `docs/four-cases.md` were found by treating the pipeline's own output as something to audit,
@@ -305,7 +306,7 @@ of the submission: `docs/four-cases.md` case 4 is not four contrived examples, i
 was actually found.
 
 **The run behind these numbers is committed, not just described.** `samples/crosscheck.sample.db`
-is the actual populated database — 5,835 grounded facts, ~3,300 canonical attributes, ~650
+is the actual populated database — 7,750 grounded facts, 3,618 canonical attributes, 4,579
 relations — from the run that produced this submission. `cp samples/crosscheck.sample.db
 data/crosscheck.db` and the UI or CLI shows real output with no API key and no wait; see
 `samples/README.md`. `docs/four-cases.md`'s fact and relation IDs are from this same file, so

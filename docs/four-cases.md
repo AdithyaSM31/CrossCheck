@@ -1,10 +1,11 @@
 # The four required cases
 
 Every example below is real output from this system running on the unmodified starter
-documents — nothing here is hand-picked data, a hard-coded rule, or staged. Fact and
-relation IDs are from the committed database (`data/crosscheck.db`, produced by
-`crosscheck extract && crosscheck link && crosscheck reconcile`); reproduce them with
-`python -m crosscheck.cli relations --type <TYPE>` or the Findings screen in the UI.
+documents — nothing here is hand-picked data, a hard-coded rule, or staged. The run behind
+them: **7,750 grounded facts, 3,618 canonical attributes, 4,579 relations** across the six
+documents. Fact and relation IDs are from `samples/crosscheck.sample.db`, committed so these
+examples can be checked without an API key (`cp samples/crosscheck.sample.db data/crosscheck.db`,
+then `python -m crosscheck.cli relations --type <TYPE>` or the Findings screen in the UI).
 
 ---
 
@@ -22,7 +23,7 @@ quarter that are not, individually, the same claim as one another:
 No pair of these shares a claim key, so key-matching alone finds nothing. The
 derived-value checker (`reason/derived.py`) instead asks: does any stated percentage equal
 one same-period, same-subject amount divided by another? **46 ÷ 2,076 = 2.22%**, which
-agrees with the stated 2.2% within tolerance — `DERIVED_CONSISTENT` relation `#1268`,
+agrees with the stated 2.2% within tolerance — `DERIVED_CONSISTENT` relation `#4212`,
 decided by rule with no model call. No formula for "EBITDA margin" is hard-coded; the
 checker only requires the target's own attribute name to signal it is a ratio ("margin",
 "ratio", "percentage", "share") and the numerator to share a word with the target, which is
@@ -83,7 +84,7 @@ in what should be one number.
 reports the second as fully **contained within** the first, rather than disjoint. The rule
 engine reads that as exactly one claim-key component differing — `period` — and labels the
 pair `RECONCILED_BY_CONTEXT` with discriminator *"period (one covers part of the other)"*
-(relation `#57`, decided by rule, confidence 0.90, zero model calls). An annual figure and its
+(relation `#661`, decided by rule, confidence 0.90, zero model calls). An annual figure and its
 own fourth quarter are not a contradiction; they are what containment looks like, and the
 system says so instead of flagging a conflict.
 
@@ -120,6 +121,19 @@ were the fact's value. **Fix:** any proposed value containing both `=` and `;` i
 validation (`extract/extractor.py::_looks_like_undecomposed_row`); no legitimate single value
 in this corpus's schema contains both. Verified on the live run: 242 such rows caught with
 zero false positives among correctly-shaped values.
+
+**And then, better: the cause was removed rather than only caught.** The guard was written
+against `gpt-5-nano`, which produced these constantly. Measuring a second extraction model on
+an identical 30-block sample showed `gpt-oss-120b` (via Cerebras' free tier) grounding 429 of
+429 proposed facts against `gpt-5-nano`'s 338 of 401, and decomposing the IMF's Table 1
+correctly — `9.7[2021/22]`, `7.6[2022/23]`, `9.2[2023/24]`, `6.5[2024/25]`, `6.6[2025/26]`,
+`6.2[2026/27]`, one fact per cell with the right period on each. Re-extracting only the 193
+table blocks with it (`crosscheck extract --kind table`, added for exactly this) took table
+grounding from **59% to 99.3%** and produced **2,760 table facts where there had been 845** —
+the same tables, read properly. The guard stays, because a guard that fires zero times is the
+correct end state for one and because the failure is model-dependent rather than gone
+forever; but the honest lesson is that a validation guard contains a bad extractor, and
+measuring a better one fixes it.
 
 ### 4b. A value truncated mid-phrase — **fixed**
 
