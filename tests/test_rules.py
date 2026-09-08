@@ -119,3 +119,33 @@ def test_agreement_under_differing_qualifiers_still_corroborates():
     b = mk("pin-code reach", "18,793", period="Q4 FY24", scope="standalone", doc_id=2)
     v = rules.classify(a, b)
     assert v.label == rules.CORROBORATES and "scope" in v.discriminator
+
+
+# --------------------------------------------------------------- supersession direction
+def test_order_by_date_puts_earlier_document_first():
+    """SUPERSEDES is directional and the model is only ever shown a chronologically
+    ordered pair, so its label never has to depend on which fact happened to come first
+    in a cluster list. Getting this backwards would record a 2022 estimate as revising a
+    2024 figure."""
+    from crosscheck.reason.adjudicate import _order_by_date
+
+    older = mk("real gdp growth", "9.2", subject="India", period="2023-24",
+               doc_id=1, published_on="2022-05-01")
+    newer = mk("real gdp growth", "8.2", subject="India", period="2023-24",
+               doc_id=2, published_on="2025-01-15")
+
+    assert _order_by_date(older, newer) == (older, newer)
+    assert _order_by_date(newer, older) == (older, newer)
+
+
+def test_order_by_date_pushes_undated_facts_last():
+    """SUPERSEDES needs two dates to mean anything; an undated fact should never be
+    treated as the earlier one just because it happened to be compared first."""
+    from crosscheck.reason.adjudicate import _order_by_date
+
+    dated = mk("real gdp growth", "9.2", subject="India", period="2023-24",
+               doc_id=1, published_on="2022-05-01")
+    undated = mk("real gdp growth", "8.2", subject="India", period="2023-24",
+                 doc_id=2, published_on=None)
+
+    assert _order_by_date(undated, dated) == (dated, undated)

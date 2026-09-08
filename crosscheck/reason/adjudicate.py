@@ -39,9 +39,13 @@ Labels:
                       evidence explains the difference.
 - RECONCILED_BY_CONTEXT  the values differ, but something stated explains it -- a different
                       period, scope, basis, unit, definition, or data vintage.
-- SUPERSEDES          the newer document revises the older figure for the same claim: an
-                      estimate becoming an actual, a revision, a rebasing. Use this only
-                      when fact A comes from the later-published document.
+- SUPERSEDES          the same claim, and B's document was published after A's and revises
+                      A's figure: an estimate becoming an actual, a revision, a rebasing.
+                      A is always the earlier-published fact and B the later one -- they
+                      are given to you in that order. Never use this label the other way
+                      around; if A is somehow the more authoritative or later figure, that
+                      is not what this label means and you should use CONTRADICTS or
+                      RECONCILED_BY_CONTEXT instead.
 - UNRELATED           they are not the same measure after all.
 
 "discriminator" names what explains the difference, when one does: period, scope, basis,
@@ -85,7 +89,7 @@ class ReconcileStats:
 
 def _describe(f: FactView, tag: str) -> str:
     bits = [
-        f"{tag}. {f.subject} — {f.attribute} = {f.value_raw}",
+        f"{tag} {f.subject} — {f.attribute} = {f.value_raw}",
         f"   normalised: {f.value_num} ({f.unit_family or 'unitless'})",
         f"   period: {f.period_label or 'not stated'}",
         f"   scope: {f.scope or 'not stated'} | basis: {f.basis or 'not stated'}",
@@ -122,10 +126,20 @@ def candidate_pairs(cluster: list[FactView]) -> list[tuple[FactView, FactView]]:
     return pairs[:MAX_CLUSTER_PAIRS]
 
 
+def _order_by_date(a: FactView, b: FactView) -> tuple[FactView, FactView]:
+    """Earlier-published fact first. Undated facts sort after dated ones -- SUPERSEDES
+    can only be claimed between two dated documents, so pushing undated facts last keeps
+    the ordering meaningful rather than arbitrary."""
+    da, db = a.published_on or "9999-99-99", b.published_on or "9999-99-99"
+    return (a, b) if (da, a.id) <= (db, b.id) else (b, a)
+
+
 async def _ask(client: LLMClient, a: FactView, b: FactView, verdict) -> dict | None:
-    diffs = differing_components(a.claim_key, b.claim_key) or ["nothing"]
+    early, late = _order_by_date(a, b)
+    diffs = differing_components(early.claim_key, late.claim_key) or ["nothing"]
     user = (
-        f"{_describe(a, 'A')}\n\n{_describe(b, 'B')}\n\n"
+        f"{_describe(early, 'A (earlier-published).')}\n\n"
+        f"{_describe(late, 'B (later-published, or same/unknown date as A).')}\n\n"
         f"Parts of the claim that differ: {', '.join(diffs)}.\n"
         f"Rule-based observation: {verdict.detail or verdict.rule}\n\n"
         "Adjudicate."
@@ -145,7 +159,8 @@ def _store(conn, a: FactView, b: FactView, *, label, discriminator, explanation,
                      rules.SUPERSEDES, rules.DERIVED}:
         return False
     lo, hi = (a, b) if a.id < b.id else (b, a)
-    # SUPERSEDES is directional: keep the model's ordering.
+    # SUPERSEDES is directional: fact_a is chronologically earlier, fact_b later.
+    # The caller is responsible for passing the pair in that order (see _order_by_date).
     if label == rules.SUPERSEDES:
         lo, hi = a, b
     try:
@@ -235,10 +250,15 @@ async def reconcile(
             if not data:
                 return
             label = str(data.get("label", "")).strip().upper()
+            # The model was shown A as the earlier-published fact and B as the later one;
+            # store the same pair in that order so a SUPERSEDES relation's direction in the
+            # database matches what the model actually reasoned about, regardless of the
+            # arbitrary order the two facts happened to be compared in.
+            early, late = _order_by_date(a, b)
             async with sem:
                 with session() as conn:
                     if _store(
-                        conn, a, b,
+                        conn, early, late,
                         label=label,
                         discriminator=str(data.get("discriminator", ""))[:60],
                         explanation=str(data.get("explanation", ""))[:1200],

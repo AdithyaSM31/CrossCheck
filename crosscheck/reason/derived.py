@@ -20,7 +20,6 @@ figures sharing a period, some pair will divide into some percentage by chance; 
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from ..normalize.periods import relation, PeriodRelation
