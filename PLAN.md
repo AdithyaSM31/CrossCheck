@@ -56,12 +56,19 @@ PDF ──► ingest ──► blocks ──► [prefilter] ──► LLM extrac
                 SQLite  ◄──►  FastAPI  ◄──►  web UI
 ```
 
-Stack: **Python 3.11 · FastAPI · SQLite (FTS5) · PyMuPDF · Anthropic Claude · vanilla JS UI**
+Stack: **Python 3.11 · FastAPI · SQLite (FTS5) · PyMuPDF · vanilla JS UI**
 (no build step — `pip install` then `uvicorn` is the entire setup).
 
-Models: **Haiku 4.5** for bulk per-block extraction (cheap, parallel, high JSON reliability),
-**Sonnet 5** for pairwise adjudication and attribute canonicalisation (far fewer calls, needs
-the reasoning). Provider is behind a thin interface so the model is a config line.
+Models: planned as Anthropic Haiku/Sonnet, below. What actually shipped is
+**`gpt-oss-120b` on Cerebras's free tier** for bulk per-block extraction — measured
+against Haiku, gpt-5-nano and gpt-4.1-mini on this corpus, it won outright (see the
+`AI tools used` section of `README.md`) — and **`gpt-4.1-mini`** for pairwise
+adjudication and attribute canonicalisation. Provider is behind a thin interface
+(`crosscheck/config.py`), so any OpenAI-compatible endpoint or the Anthropic Messages
+API works as a straight config change; `.env.example` documents both.
+
+*(Original plan, kept for the record: Haiku 4.5 for bulk extraction — cheap, parallel,
+high JSON reliability — and Sonnet 5 for adjudication, needing the reasoning.)*
 
 ---
 
