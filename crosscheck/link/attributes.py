@@ -47,7 +47,9 @@ The test for "same measure": once period, scope and basis are equal, could a val
 compared directly against a value of the other and disagreement mean something? If not, they
 are different measures.
 
-Return JSON: {"groups": [{"canonical": "...", "members": ["...", "..."]}]}
+Each attribute is given with a numeric index. Return JSON:
+{"groups": [{"canonical": "...", "members": [0, 3, 7]}]}
+using those indices, not the attribute text, to say which inputs belong together.
 
 Rules:
 1. NEVER merge a level with a rate of change or a ratio. "revenue" and "revenue growth" are
@@ -60,7 +62,7 @@ Rules:
    spelled-out versus symbolic forms, and qualifiers that merely restate the measure.
 5. The canonical name is a short lowercase noun phrase with no period, scope, currency or
    unit in it.
-6. Every input name must appear in exactly one group. A group may have a single member.
+6. Every index must appear in exactly one group. A group may have a single member.
 """
 
 
@@ -154,23 +156,43 @@ def block_attributes(items: list[dict], vocabulary: dict[str, dict]) -> list[lis
 
 
 async def _adjudicate(client: LLMClient, batch: list[dict]) -> list[dict]:
-    """Ask the model to name and, where necessary, split a batch of candidate groups."""
+    """Ask the model to name and, where necessary, split a batch of candidate groups.
+
+    Referenced by index rather than by display name. Two unmergeable groups can
+    legitimately show the same text -- an attribute string that recurs under two
+    incompatible unit families is exactly the kind of thing blocking is supposed to keep
+    apart -- and matching the model's answer back by string would either collide the two
+    in a lookup dict or hand the model an ambiguous listing to begin with. An index has
+    no such collision.
+    """
     listing = "\n".join(
-        f"- {g['canon']} [unit: {g['unit_family'] or 'unknown'}; "
+        f"{i}. {g['canon']} [unit: {g['unit_family'] or 'unknown'}; "
         f"example: {g['members'][0]['example']}]"
-        for g in batch
+        for i, g in enumerate(batch)
     )
+    fallback = [{"canonical": g["canon"], "members": [i]} for i, g in enumerate(batch)]
     try:
         data = await client.complete_json(
-            SYSTEM, f"Attribute names:\n{listing}", max_tokens=3000
+            SYSTEM, f"Attributes:\n{listing}", max_tokens=3000
         )
     except (LLMError, ValueError):
-        return [{"canonical": g["canon"], "members": [g["canon"]]} for g in batch]
+        return fallback
 
     groups = data.get("groups") if isinstance(data, dict) else None
     if not isinstance(groups, list) or not groups:
-        return [{"canonical": g["canon"], "members": [g["canon"]]} for g in batch]
-    return [g for g in groups if isinstance(g, dict) and g.get("canonical")]
+        return fallback
+
+    out = []
+    for g in groups:
+        if not isinstance(g, dict) or not g.get("canonical"):
+            continue
+        indices = [
+            m for m in (g.get("members") or [])
+            if isinstance(m, int) and 0 <= m < len(batch)
+        ]
+        if indices:
+            out.append({"canonical": g["canonical"], "members": indices})
+    return out or fallback
 
 
 async def consolidate(
@@ -199,18 +221,16 @@ async def consolidate(
             )
 
     if fresh and use_llm and client is not None:
-        by_canon = {g["canon"]: g for g in fresh}
         for i in range(0, len(fresh), BATCH):
             batch = fresh[i : i + BATCH]
             stats.calls += 1
             for decided in await _adjudicate(client, batch):
                 canon = str(decided["canonical"]).strip().lower()[:120]
-                for member in decided.get("members") or []:
-                    g = by_canon.get(str(member))
-                    if g:
-                        mapping.setdefault(canon, []).extend(
-                            m["attribute_raw"] for m in g["members"]
-                        )
+                for idx in decided.get("members") or []:
+                    g = batch[idx]  # _adjudicate already validated the index range
+                    mapping.setdefault(canon, []).extend(
+                        m["attribute_raw"] for m in g["members"]
+                    )
         # Anything the model failed to place keeps its own name rather than vanishing.
         placed = {raw for raws in mapping.values() for raw in raws}
         for g in fresh:

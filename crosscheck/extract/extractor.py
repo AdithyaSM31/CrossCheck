@@ -79,6 +79,26 @@ def _clean_str(v: object, limit: int = 400) -> str | None:
     return s[:limit]
 
 
+# A wide table row is rendered to the model as "label: header=value; header=value; ...",
+# and the extraction prompt is explicit that each cell is its own fact. Some models do not
+# reliably follow that on rows with many columns, and instead copy the whole row back as
+# one "value" string. That string still contains the real numbers, so it grounds perfectly
+# -- the quote matches, and normalize.values.parse_value happily reads off the FIRST number
+# it finds (typically a year, since row-major cells lead with a period like "2021/22=...")
+# as if it were the fact's value. The result is a confidently wrong fact: a claimed
+# "Cyclically adjusted balance" of 2021, sourced from real evidence, that passed every
+# other check. Catching it here, before normalisation, is cheaper and more reliable than
+# trying to repair it after the fact.
+#
+# The check is deliberately blunt rather than pattern-matched to a specific period shape:
+# no legitimate single value in this corpus contains both '=' and ';' together -- every
+# real value is a bare number, a signed or parenthesised amount, a currency string, a
+# period label, or a short status word. Both characters appearing together is the
+# signature of a serialised row, whatever the row's own key format happens to be.
+def _looks_like_undecomposed_row(value: str) -> bool:
+    return "=" in value and ";" in value
+
+
 def validate(raw: object) -> tuple[dict | None, str]:
     """Coerce a model-proposed fact into our shape, or say why it cannot be."""
     if not isinstance(raw, dict):
@@ -95,6 +115,8 @@ def validate(raw: object) -> tuple[dict | None, str]:
         return None, "missing value"
     if not quote:
         return None, "missing evidence quote"
+    if _looks_like_undecomposed_row(value):
+        return None, "value looks like a whole table row, not one cell"
 
     kind = (_clean_str(raw.get("value_kind")) or "").lower()
     if kind not in VALUE_KINDS:
