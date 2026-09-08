@@ -99,6 +99,27 @@ def _looks_like_undecomposed_row(value: str) -> bool:
     return "=" in value and ";" in value
 
 
+# A value cut off mid-phrase is worse than one that is merely awkward: "5.6 percent of"
+# does not just read badly, it actively misstates the fact -- 5.6 percent of *what* is
+# the entire content of the claim, and it is missing. Weaker extractors occasionally
+# truncate a value at the extraction prompt's own length guidance rather than at a
+# grammatical boundary. A value ending on a bare preposition, article or conjunction is
+# reliably a cut phrase rather than a genuine value shaped that way, so it is rejected
+# rather than stored as a fact that looks complete and is not.
+_DANGLING_LAST_WORD = {
+    "of", "the", "a", "an", "in", "with", "to", "for", "and", "or",
+    "from", "by", "at", "as", "on", "is", "than", "over", "under",
+}
+
+
+def _looks_truncated(value: str) -> bool:
+    words = value.strip().split()
+    if not words:
+        return False
+    last = words[-1].lower().rstrip(".,;:")
+    return last in _DANGLING_LAST_WORD
+
+
 def validate(raw: object) -> tuple[dict | None, str]:
     """Coerce a model-proposed fact into our shape, or say why it cannot be."""
     if not isinstance(raw, dict):
@@ -117,6 +138,8 @@ def validate(raw: object) -> tuple[dict | None, str]:
         return None, "missing evidence quote"
     if _looks_like_undecomposed_row(value):
         return None, "value looks like a whole table row, not one cell"
+    if _looks_truncated(value):
+        return None, "value looks truncated mid-phrase"
 
     kind = (_clean_str(raw.get("value_kind")) or "").lower()
     if kind not in VALUE_KINDS:

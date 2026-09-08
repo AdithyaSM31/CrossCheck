@@ -10,7 +10,11 @@ confidently wrong fact sourced from real evidence. See docs/four-cases.md, case 
 
 import pytest
 
-from crosscheck.extract.extractor import _looks_like_undecomposed_row, validate
+from crosscheck.extract.extractor import (
+    _looks_like_undecomposed_row,
+    _looks_truncated,
+    validate,
+)
 
 
 @pytest.mark.parametrize(
@@ -40,6 +44,34 @@ def test_legitimate_scalar_values_are_not_flagged(value):
     assert not _looks_like_undecomposed_row(value)
     fact, why = validate({"attribute": "x", "value": value, "evidence_quote": "q" * 20})
     assert fact is not None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["5.6 percent of", "well positioned to", "growth in the", "increased by a"],
+)
+def test_truncated_value_is_rejected(value):
+    """A value cut off mid-phrase is worse than an awkward one: '5.6 percent of' does
+    not just read badly, it is missing the entire content of the claim -- of what?
+    Weaker extractors sometimes truncate a value at their own length guidance rather
+    than at a grammatical boundary."""
+    assert _looks_truncated(value)
+    fact, why = validate({"attribute": "x", "value": value, "evidence_quote": "q" * 20})
+    assert fact is None and "truncated" in why
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "well positioned to allow greater exchange rate flexibility",
+        "to an NBFC", "resigned", "India", "0.9", "9.2", "Q4 FY24",
+    ],
+)
+def test_values_that_merely_end_in_a_common_word_are_not_flagged(value):
+    """The guard checks the LAST word only. A value legitimately ending in a noun that
+    happens to follow a preposition ('to an NBFC') must not be caught -- only a value
+    ending ON the dangling word itself is truncated."""
+    assert not _looks_truncated(value)
 
 
 def test_validate_rejects_missing_fields():
