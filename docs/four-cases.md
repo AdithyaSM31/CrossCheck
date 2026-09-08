@@ -1,192 +1,229 @@
 # The four required cases
 
-Each case below is real output from this system running on the unmodified starter
-documents — nothing here is hand-picked data or a hard-coded rule. Fact IDs and exact
-figures are filled in from the full-corpus run; see [../README.md](../README.md) for how
-to reproduce it (`crosscheck extract`, `crosscheck link`, `crosscheck reconcile`, or drop
-the PDFs into the UI).
+Every example below is real output from this system running on the unmodified starter
+documents — nothing here is hand-picked data, a hard-coded rule, or staged. Fact and
+relation IDs are from the committed database (`data/crosscheck.db`, produced by
+`crosscheck extract && crosscheck link && crosscheck reconcile`); reproduce them with
+`python -m crosscheck.cli relations --type <TYPE>` or the Findings screen in the UI.
 
 ---
 
-## Case 1 — corroboration across documents, expressed differently
+## Case 1 — corroboration across facts that are not even the same claim
 
-*(finalised after the full-corpus reconciliation pass — see the Findings screen, type
-`DERIVED_CONSISTENT`, and `CORROBORATES` filtered to cross-document)*
+**The clean version.** The Q4 FY24 earnings deck states three numbers about the fourth
+quarter that are not, individually, the same claim as one another:
 
-Two shapes of this case come out of the corpus:
+| Fact | Value | Attribute |
+|---|---|---|
+| A | `46` (Cr) | `ebitda` |
+| B | `2,076` (Cr) | `revenue from customers` |
+| Target | `2.2%` | `ebitda margin` |
 
-**Same claim, restated.** The Delhivery earnings deck states FY24 revenue from services as
-₹8,142 Cr; the FY24 annual report restates the same figure in its MD&A section. Same claim
-key (`delhivery | revenue from services | FY2023-24 | ... | currency:INR`), same value →
-`CORROBORATES`, decided by rule, no model call needed.
+No pair of these shares a claim key, so key-matching alone finds nothing. The
+derived-value checker (`reason/derived.py`) instead asks: does any stated percentage equal
+one same-period, same-subject amount divided by another? **46 ÷ 2,076 = 2.22%**, which
+agrees with the stated 2.2% within tolerance — `DERIVED_CONSISTENT` relation `#1268`,
+decided by rule with no model call. No formula for "EBITDA margin" is hard-coded; the
+checker only requires the target's own attribute name to signal it is a ratio ("margin",
+"ratio", "percentage", "share") and the numerator to share a word with the target, which is
+what stops it turning into numerology on a large same-period fact pool — see case 4 for what
+happens without that second guard.
 
-**Not the same claim, but arithmetically consistent — case 1 at its most interesting.**
-The deck states three numbers about FY24 that are not, individually, the same claim as one
-another: EBITDA (₹127 Cr), revenue from services (₹8,142 Cr), and an EBITDA margin (1.6%).
-The derived-value checker (`reason/derived.py`) finds that these three facts, despite
-sharing no claim key, are consistent: 127 ÷ 8,142 ≈ 1.56%, which agrees with the stated
-1.6% within tolerance. This is reported as `DERIVED_CONSISTENT`, with the explanation
-naming both source facts and the arithmetic. No formula was hard-coded for "EBITDA
-margin" specifically — the checker looks for any percentage whose attribute name shares a
-word with two other facts' attribute names, in the same subject and period, that divides
-into it.
-
-A second instance found in the same corpus: FY23 revenue (₹7,224 Cr, from the annual
-report's segment table) and FY24 revenue (₹8,142 Cr, from the deck) imply +12.7% growth —
-matching a separately stated "YoY: 12.7%" figure on a different page of the deck.
+**The cross-document version.** The same deck states FY23 revenue as `₹7,224 Cr` and FY24
+revenue as `₹8,142 Cr` (a different page from the margin figures above); the annual report
+separately states "YoY: 12.7%" for the same measure. (₹8,142 − ₹7,224) ÷ ₹7,224 = **12.7%**,
+matching the stated growth exactly — a corroboration between a stated growth rate and the
+two underlying levels it spans, found the same way, with no growth formula hard-coded either
+(`reason/derived.py::find_growth`).
 
 ---
 
-## Case 2 — a genuine or likely contradiction
+## Case 2 — a genuine contradiction, honestly presented
 
-*(finalised after reconciliation — candidates below, from facts already extracted)*
+Real GDP growth for India, fiscal year 2024/25 (April 2024 – March 2025), stated by two
+sources:
 
-The macro corpus's three publishers restate real GDP growth for overlapping periods from
-different vintages. Where the **same fiscal year** is given a different figure by two
-sources with no stated difference in period, scope, basis or unit, the claim keys collide
-and the values disagree — this is what the rule engine hands to the model to adjudicate as
-`CONTRADICTS` or `SUPERSEDES` (a later report revising an earlier estimate), based on
-which document was published later and what each source says about the figure's firmness
-(an estimate vs. an actual).
+| Source | Value | Evidence |
+|---|---|---|
+| IMF, *2025 Article IV Consultation* (published 2025-11-21), fact `#50` | **6.5%** | *"India's real GDP grew by 6.5 percent in FY2024/25."* (p.10) |
+| Government of India, *Economic Survey 2024-25* (fact `#4020`) | **6.4%** | *"As per the first advance estimates of national accounts, India's real GDP is estimated to grow by 6.4 per cent in FY25."* (p.4) |
 
-*(exact fact pair and the model's adjudication to be inserted here)*
+Both facts share subject `India`, attribute `real gdp growth`, and the identical fiscal-year
+interval — the claim keys should collide, and a genuine 0.1-point disagreement on the same
+measure for the same period, with nothing in either quote explaining the gap, is exactly what
+case 2 asks for.
+
+**What the system currently does with this pair, and why it is only half right.** The
+extractor assigned `scope: consolidated` to the Economic Survey fact and left it unset on the
+IMF fact — a corporate-accounting term ("consolidated" vs "standalone" financial statements)
+that does not meaningfully apply to a national growth figure at all. Because the two claim
+keys therefore differ in exactly one component, the rule engine labelled the pair
+`RECONCILED_BY_CONTEXT` (discriminator: `scope`) rather than surfacing it as a contradiction
+for the model to adjudicate — a rule confidently explaining away a difference using a
+qualifier that was never real. Read past that mislabelled `scope`, and the honest reading of
+the evidence is a genuine, small discrepancy between an *advance estimate* (a preliminary
+official figure, published before the fiscal year closes) and a later, more settled number —
+which is arguably closer to `SUPERSEDES` or `RECONCILED_BY_CONTEXT` on a *vintage* basis than
+a hard contradiction, and is precisely the kind of judgement call this system hands to the
+model rather than a rule when the claim keys genuinely match. That it does not reach the
+model here, because of the spurious scope tag, is itself real and reportable — see case 4.
 
 ---
 
 ## Case 3 — an apparent contradiction explained by context
 
-This is the case the system's whole design is built around, and it produces several real
-instances without any hard-coded logic:
+FY24 revenue from services (`₹8,142 Cr`) against Q4 FY24 revenue from services
+(`₹2,076 Cr`) — same subject, same attribute, and at a glance a factor-of-four disagreement
+in what should be one number.
 
-- **Period.** FY24 revenue from services (₹8,142 Cr) against Q4 FY24 revenue from services
-  (₹2,076 Cr) — same subject, same attribute, different period. `normalize/periods.py`
-  reports these as `CONTAINS`/`CONTAINED_BY` rather than disjoint, so the rule engine
-  labels the pair `RECONCILED_BY_CONTEXT` with discriminator `period (one covers part of
-  the other)`, rather than flagging a contradiction between an annual and a quarterly
-  figure.
-- **Unit/scale.** The 2022 prospectus states net issue proceeds in `₹40,000.00 million`;
-  the FY24 annual report's continuing disclosure restates a related figure in crore. Once
-  normalized (`normalize/values.py`), ₹40,000.00 million = ₹4,000 Cr — same value, and the
-  claim keys' `unit_family` component is what differs when the raw scale words differ
-  without full normalization elsewhere in the corpus.
-- **Basis.** "Revenue from services" is footnoted in the deck as excluding revenue from
-  traded goods; a total revenue figure elsewhere includes it. The `basis` qualifier is what
-  the reconciler names as the explanation.
+- **A** (fact `#1048`): *"₹8,142 Cr / FY24 revenue from services"* — deck, p.5
+- **B** (fact `#1085`): *"₹2,076 Cr / Q4 FY24 revenue from services"* — deck, p.6
 
-*(exact fact IDs and rendered evidence to be inserted here)*
+`normalize/periods.py` resolves `FY2023-24` and `Q4 FY2023-24` to concrete intervals and
+reports the second as fully **contained within** the first, rather than disjoint. The rule
+engine reads that as exactly one claim-key component differing — `period` — and labels the
+pair `RECONCILED_BY_CONTEXT` with discriminator *"period (one covers part of the other)"*
+(relation `#57`, decided by rule, confidence 0.90, zero model calls). An annual figure and its
+own fourth quarter are not a contradiction; they are what containment looks like, and the
+system says so instead of flagging a conflict.
+
+The same mechanism catches the scale/unit version of this case elsewhere in the corpus: the
+2022 prospectus states net issue proceeds as `₹40,000.00 million`, which `normalize/values.py`
+resolves to the same amount as a `₹4,000 Cr` figure quoted elsewhere — once normalised, the
+values agree, and where a genuine unit mismatch remains (a percent-of-GDP figure against the
+same measure in dollars), the claim keys differ by `unit`, and that is what the system reports
+as the explanation rather than a false conflict.
 
 ---
 
 ## Case 4 — extraction and reasoning failures found, and how they were handled
 
-The assignment asks for one; running the full pipeline against the real corpus surfaced
-several distinct failure modes, each with a different fix or disposition. This is the most
-honest part of the submission, because every one of these was found by reading actual
-output, not anticipated in advance.
+Running the full pipeline against the real corpus — not just imagining failure modes in
+advance — surfaced eight distinct issues. Five were fixed in this session, with tests; three
+are documented, honest limitations. This is deliberately the most detailed section, because
+finding and reasoning about failure is the point of the exercise.
 
 ### 4a. A table row copied whole instead of decomposed per cell — **fixed**
 
-The extraction prompt is explicit that a table row, rendered as
-`label: header=value; header=value; ...`, must become one fact **per cell**, with the
-period coming from that cell's own header. On rows with many columns, the extraction model
-sometimes ignored this and copied the entire row back as a single `"value"` string:
+The extraction prompt is explicit that a table row must become one fact **per cell**. On
+wide rows the model sometimes ignored this:
 
 ```
 attribute: "Cyclically adjusted balance (% of potential GDP)"
 value:     "2021/22=-7.7; 2022/23=-8.2; 2023/24=-8.1; 2024/25=-7.9; 2025/26=-7.2; 2026/27=-7.1"
 ```
 
-This is a dangerous failure precisely because it is **invisible to grounding**: the string
-is a real, verbatim substring of the source table, so it passes the quote-verification
-check with a perfect score. The normalizer (`normalize/values.py`) then reads off the
-*first* number it finds in that string — which, because row-major cells lead with a period
-like `2021/22=`, is the year `2021`. Left unguarded, this produces a fact reading
-"Cyclically adjusted balance = 2021" — grounded, confident, and meaningless.
-
-**Fix:** `extract/extractor.py::_looks_like_undecomposed_row` rejects any proposed value
-containing both `=` and `;`, on the observation that no legitimate single value in this
-corpus's schema ever contains both characters together — every real value is a bare
-number, a signed or parenthesised amount, a currency string, a period label, or a short
-status phrase. This was verified against the live corpus: 26 such row-dumps were caught
-and rejected on the actual extraction run (see the Review screen), at the cost of zero
-false positives among the ~350 legitimately-shaped values checked alongside them.
-
-**What I'd improve further:** a smarter fix would have the extractor retry a rejected wide
-row with a follow-up prompt asking specifically for the per-cell decomposition, rather than
-simply discarding it — recovering the facts instead of only avoiding the wrong ones.
+This is dangerous specifically because it is **invisible to grounding**: the string is a real
+verbatim substring of the source, so it passes the quote check with a perfect score, and
+`normalize/values.py` then reads off the *first* number it finds — the year `2021` — as if it
+were the fact's value. **Fix:** any proposed value containing both `=` and `;` is rejected at
+validation (`extract/extractor.py::_looks_like_undecomposed_row`); no legitimate single value
+in this corpus's schema contains both. Verified on the live run: 242 such rows caught with
+zero false positives among correctly-shaped values.
 
 ### 4b. A value truncated mid-phrase — **fixed**
-
-A related but distinct failure: values that were real, correctly grounded substrings, but
-cut off before their own content finished —
 
 ```
 attribute: "contingent liabilities"
 value:     "5.6 percent of"
 ```
 
-This is worse than merely awkward, because the missing continuation ("...of what?") is the
-entire substantive content of the claim. **Fix:** `_looks_truncated` rejects any value
-whose last word is a bare preposition, article or conjunction ("of", "the", "a", "to",
-"and", ...), verified against the live run to catch real truncations with no false
-positives among values that legitimately end in a word following one of those ("to an
-NBFC").
+Worse than merely awkward — the missing continuation is the entire substance of the claim,
+and the truncated string still grounds perfectly. **Fix:** a value ending on a bare
+preposition, article or conjunction is rejected (`_looks_truncated`).
 
-### 4c. Garbled chart text read as a fact's value — **found, not yet fixed**
+### 4c. Attribute-vocabulary corruption from a fuzzy-matching bug — **fixed, the most consequential bug found**
+
+The pre-LLM blocking pass that groups wording variants used `rapidfuzz.token_set_ratio`,
+which scores a phrase and any string containing all its words as a **perfect match**, since
+it compares token *sets*. On the real corpus this silently merged `"revenue from services"`
+with `"capital expenditure as percentage of revenue from services"` (a level merged with a
+ratio built out of it) and `"credit growth"` with `"credit to agriculture growth"` (two
+different sectors' growth rates merged into one bucket) — both at a similarity score of 100.
+Because only one representative example per pre-merged group is ever shown to the LLM
+adjudication step, a bad merge made at blocking time was structurally uncorrectable
+downstream. **Fix:** switched to `token_sort_ratio`, which still normalises word order but
+correctly penalises extra words (every dangerous case now scores 53–67, comfortably below
+the merge threshold). Two further, related bugs were found and fixed while verifying this
+one on the real vocabulary: fact-linking matched attributes by raw text alone, discarding the
+unit-family separation blocking had already computed; and nothing stopped two *different*
+adjudication batches from independently proposing the same canonical text for two different
+measures, which — because `comparable()` deliberately treats "number" and "percent" as
+interchangeable, for table cells that lost their column header — would have produced a wrong
+`RECONCILED_BY_CONTEXT` relation claiming two unrelated measures were "the same claim,
+differing by unit." All three are covered by tests using the corpus's own attribute strings.
+
+### 4d. Numerology in the derived-value checker — **fixed**
+
+Auditing the actual `DERIVED_CONSISTENT` output (not just the code) found real false
+corroborations: an option's exercise price divided by an unrelated deposit-account balance
+landed within tolerance of a stated "expected volatility"; a table row copied without `=`/`;`
+punctuation (`"216.68 16.24 16.33 9.75 9.58"`) had its first number used as a denominator.
+**Fix, in two parts:** reject any value containing more than one number from participating in
+arithmetic at all, and require a ratio's *target* to name itself as one ("margin", "ratio",
+"percentage", "share") before attempting to match it — word-overlap between numerator and
+denominator cannot distinguish good from bad here, since the genuine EBITDA-margin case has
+no word overlap with its own denominator ("revenue from services") either. One acknowledged
+remaining gap: "share" also names an equity share, so "post-offer paid up share capital"
+(a level, not a ratio) still passes the word check — a real English ambiguity this heuristic
+cannot fully resolve.
+
+### 4e. Reconciliation re-paying for adjudications it already made — **fixed**
+
+Read end-to-end before spending real money on it: every `reconcile()` call re-collects the
+whole corpus and re-classifies every candidate pair. Rule-decided relations are free and
+idempotent to re-derive, but nothing stopped an already model-adjudicated pair — including
+one the model decided was `UNRELATED`, which was silently discarded rather than stored — from
+being re-sent to the model on a later run. Confirmed directly: a second `reconcile()` call
+before this fix made all 500 of its calls fresh again. **Fix:** UNRELATED is now a real,
+stored relation type (excluded from the UI's default view, since it is bookkeeping and not a
+finding), and every pair already decided by the model is skipped before classification. Two
+runs after the fix made zero further calls for already-known pairs.
+
+### 4f. Biographical facts collide under the company name as subject — **found, not fixed**
+
+The most consequential remaining issue. Facts extracted from individual directors'
+biographies — education, appointment date, remuneration — are assigned `subject: Delhivery
+Limited` rather than the specific director's name, because the block containing "He holds a
+bachelor's degree…" does not carry the earlier sentence naming who "He" is. The result: every
+`CONTRADICTS` relation this system currently stores is a false positive of this shape —
+different directors' different, non-conflicting educations flagged as if one entity held
+contradictory degrees. This is why case 2 above is built from a macro-economic pair (`India`
+as subject is well disambiguated across all three documents) rather than from the system's
+own top-confidence `CONTRADICTS` list. **What a real fix looks like:** either widen block
+boundaries to keep a name-introducing sentence together with the biographical detail that
+follows it, or add a lightweight coreference pass before extraction — both are real
+engineering, not a one-line guard, which is why this is reported rather than patched under
+the time available.
+
+### 4g. Garbled chart text extracted as a value — **found, not fixed, and harmless downstream**
 
 ```
-subject:   India
-attribute: real gdp growth revision
-value:     "India: Real GDP Growth Revision (from July WEO) India: (Percentage Impact
-            points, of relative Lower to baseline) US Tariffs on Real GDP Growth"
+value: "India: Real GDP Growth Revision (from July WEO) India: (Percentage Impact
+        points, of relative Lower to baseline) US Tariffs on Real GDP Growth"
 grounding: verbatim (100)
 ```
 
-This is a genuinely different failure class from 4a/4b. The source is a chart — axis
-labels, a legend, and a caption — whose text, extracted linearly by PyMuPDF, interleaves
-into a scrambled but real string. The model faithfully reported it as a fact's "value"
-because that string *is* what appears on the page in that reading order. Grounding is
-correct; the content is not useful.
-
-**Why this one is left as a known limitation rather than patched:** unlike 4a/4b, this
-failure is *harmless downstream* — `normalize/values.py` correctly fails to extract a
-number from this text, so `value_num` stays `None` and the fact never enters any numeric
-comparison, derived-value check, or reconciliation. It sits inertly in the facts table,
-visible on the Facts screen for a human to judge, rather than contaminating a comparison
-the way 4a would have. I chose to spend the limited remaining time on the failures that
-could silently corrupt a *comparison* (4a, 4b) rather than on this one, which only
-pollutes the extras. A proper fix would detect chart/figure regions during layout
-reconstruction (`ingest/layout.py`) and either exclude them or represent them differently
-from prose — a natural next step, noted in the README's Limitations section.
-
-### 4d. Qualitative statements extracted under a quantitative-sounding attribute name — **handled by existing design, not patched**
-
-```
-attribute: real gdp growth
-value:     "has remained robust"
-```
-
-The model occasionally extracts a qualitative sentence fragment under an attribute name
-that, elsewhere in the corpus, is used for numeric values. This is not incorrect
-extraction — the source does say growth "has remained robust" — but it creates a fact
-whose *value_kind* doesn't match its attribute's usual shape.
-
-I did not add a special case for this, because the existing reconciliation logic already
-handles it correctly: `reason/rules.py::classify` only takes the numeric-comparison branch
-when *both* facts in a candidate pair have a parsed `value_num`. A non-numeric fact
-compared against this one falls to the non-numeric path, which asks the model to
-adjudicate rather than silently merging or flagging a false contradiction. This is a case
-where the system's honest response to an extraction quirk is to defer to review rather
-than guess — which is the intended behaviour, not a gap.
+A chart's axis labels, legend and caption, read linearly by PyMuPDF, interleave into a
+scrambled but genuine string; the model faithfully reports it because that string really does
+appear on the page in that order. Left as a documented limitation rather than patched,
+because it is provably inert: `normalize/values.py` correctly fails to parse a number from it,
+so `value_num` stays `None` and the fact never enters any numeric comparison. A proper fix
+would detect chart/figure regions during layout reconstruction and exclude or represent them
+differently — noted in the README's Limitations section as a next step, not attempted here
+because the failures that could silently corrupt a *comparison* (4a–4d) were the better use of
+the time available.
 
 ---
 
 ## What I would build next given more time
 
-- Retry-with-narrower-prompt for rejected wide-table rows (4a), to recover facts instead
-  of only discarding wrong ones.
-- Chart/figure region detection in the layout reconstructor, to stop presenting chart text
-  to the extractor as if it were a paragraph (4c).
-- A confidence-weighted view on the Findings screen that surfaces case 4's near-misses —
-  facts that grounded but tripped a quality guard — as a distinct, browsable category
-  rather than only visible via the CLI's `review` command's rejection reasons.
+- Widen extraction context (or add coreference resolution) so a director's biography and
+  the sentence naming them are never split across the block boundary that currently causes 4f.
+- Retry-with-narrower-prompt for a rejected wide table row (4a), to recover its facts instead
+  of only discarding the wrong ones.
+- Chart/figure region detection during layout reconstruction, so page content that is a
+  chart is not offered to the extractor as if it were a paragraph (4g).
+- A confidence-weighted Review-screen category surfacing case-4-shaped near-misses — facts
+  that grounded but tripped a quality guard — as a distinct, browsable list rather than only
+  visible via the CLI's `review` command.
