@@ -10,6 +10,70 @@ filenames, schemas or per-document rules.
 
 ---
 
+## Architecture
+
+The pipeline has two halves, and the split is the design. The first half exists to produce
+facts that can be *trusted*; the second compares them. Almost all the difficulty is in the
+first half — comparison is easy once two facts are known to be about the same thing.
+
+### One: from a PDF to a fact that survived checking
+
+```mermaid
+flowchart TD
+    PDF(["PDF"]) --> ING["ingest/ &nbsp;— pdf.py, layout.py, blocks.py<br/>layout rebuilt from word geometry, packed to ~5,000-char blocks<br/>no model, no API key"]
+    ING --> EX["extract/extractor.py &nbsp;— one model call per block<br/>proposes subject, attribute, value, qualifiers, and a quote"]
+    EX --> G{"ground/verify.py<br/>is the quote in the source text?<br/>is the value inside that quote?"}
+    G -- "no" --> RQ["review queue &nbsp;— a screen, not a log<br/>1,382 rejections, each with a reason"]
+    G -- "yes" --> NRM["normalize/ &nbsp;— periods.py, values.py<br/>FY25 = 2024-25 = 2024-04-01/2025-03-31<br/>magnitude, unit family, significant figures"]
+    NRM --> F[("grounded facts")]
+
+    classDef gate fill:#fdf3e7,stroke:#a86a1f,color:#4a3208
+    class G gate
+```
+
+### Two: from facts to relations between them
+
+```mermaid
+flowchart TD
+    F[("grounded facts")] --> LK["link/attributes.py<br/>attribute vocabulary, discovered rather than declared"]
+    LK --> CK["reason/keys.py &nbsp;— the CLAIM KEY<br/>subject · attribute · period · scope · basis · unit family"]
+    CK --> CL["cluster by claim key<br/>equal keys are compared · keys differing in one component are explained by it"]
+
+    CL --> RU{"reason/rules.py<br/>deterministic"}
+    CL --> DV["reason/derived.py<br/>a stated ratio against the amounts implying it,<br/>a growth rate against the two levels it spans"]
+    RU -- "decided" --> REL[("relations")]
+    RU -- "ambiguous" --> AD["reason/adjudicate.py<br/>the only place a model is asked to judge"]
+    AD --> REL
+    DV --> REL
+
+    REL --> DB[("SQLite + FTS5")]
+    DB --> API["api/app.py — FastAPI"]
+    DB --> CLI["cli.py"]
+    API --> UI["web/ — vanilla JS, no build step"]
+
+    classDef gate fill:#fdf3e7,stroke:#a86a1f,color:#4a3208
+    class RU gate
+```
+
+Three things in those pictures carry most of the design.
+
+**The check after extraction is a gate, not a log.** A proposed fact whose quote is not in the
+source, or whose number is not inside its own quote, never becomes a fact. It goes to the
+review queue — which is a screen in the product, because those failures are the evidence
+about how well extraction is actually working.
+
+**Everything before `reason/` exists to make the claim key trustworthy.** Period normalisation
+and unit families are not housekeeping; they *are* the comparison. Getting a period wrong
+invents contradictions between sources that agree, and hides the real ones.
+
+**Rules run first and the model is the fallback**, not the other way round. Periods, units and
+arithmetic are settled deterministically and carry a rule label; the model is asked only where
+rules genuinely cannot decide, and every relation records which decided it.
+
+*Approach*, below, takes each of these apart with the evidence that led to it.
+
+---
+
 ## Setup and run instructions
 
 Requires Python 3.11+.
