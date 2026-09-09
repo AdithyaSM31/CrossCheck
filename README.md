@@ -8,6 +8,15 @@ reconstruction, extraction, grounding, vocabulary consolidation, then reconcilia
 everything already known. Nothing is specific to the starter documents — no hard-coded facts,
 filenames, schemas or per-document rules.
 
+**[Setup and run](#setup-and-run-instructions)** ·
+**[Video demo](#video-demo)** ·
+**[Architecture](#architecture)** ·
+**[Approach](#approach)** ·
+**[Trade-offs](#engineering-decisions-and-trade-offs)** ·
+**[The four required cases](#the-four-required-cases)** ·
+**[Limitations and next steps](#limitations-and-next-steps)** ·
+**[Additional notes](#additional-notes)**
+
 ---
 
 ## Architecture
@@ -149,7 +158,13 @@ Nothing is committed that holds a credential; `.env` is gitignored.
 
 ## Video demo
 
-*(link)*
+A three-minute walkthrough: a PDF going in, a fact traced back to the highlighted words that
+support it, and each of the four required cases.
+
+https://github.com/user-attachments/assets/674eedb4-2c30-43ce-8802-2e715dad160f
+
+*(Renders as a player on GitHub. If you are reading this file outside GitHub, open the link
+directly.)*
 
 ---
 
@@ -287,6 +302,91 @@ extraction models on the same real blocks from this corpus before committing to 
 that pilot is what found `gpt-4.1-mini` and `gpt-4o-mini` both silently truncating and
 misreading the corpus's central table, and `gpt-5-nano` returning nothing at all until
 `reasoning_effort` was set explicitly.
+
+---
+
+## The four required cases
+
+Every example here is real output from the committed run — no hand-picked data, no hard-coded
+rule, nothing staged. `docs/four-cases.md` has the full write-up with evidence quotes and page
+numbers; each case is reproducible against `samples/crosscheck.sample.db` without an API key.
+
+### 1 · Corroboration
+
+Three facts from the Q4 FY24 deck that are **not the same claim as each other**, so key
+matching alone finds nothing:
+
+| | Value | Attribute |
+|---|---|---|
+| A | `46` Cr | `ebitda` |
+| B | `2,076` Cr | `revenue from customers` |
+| Target | `2.2%` | `ebitda margin` |
+
+`46 ÷ 2,076 = 2.22%`, matching the stated 2.2% — relation `#4212`, **decided by rule, no
+model call**. No formula for "EBITDA margin" is hard-coded; `reason/derived.py` looks for any
+stated percentage that equals one same-subject, same-period amount over another, guarded so it
+does not become numerology (see case 4d). The cross-document variant works the same way:
+FY23 `₹7,224 Cr` and FY24 `₹8,142 Cr` from the deck against the annual report's separate
+"YoY: 12.7%" — `(8,142 − 7,224) ÷ 7,224 = 12.7%`, exact.
+
+```bash
+python -m crosscheck.cli relations --type DERIVED_CONSISTENT --query "2,076" --limit 1
+```
+
+### 2 · A genuine contradiction — and the system currently gets it wrong
+
+Real GDP growth, India, FY2024-25 — identical subject, attribute and fiscal-year interval:
+
+| Source | Value |
+|---|---|
+| IMF, *2025 Article IV* — fact `#50` | **6.5%** |
+| *Economic Survey 2024-25* — fact `#4020` | **6.4%**, called a first advance estimate |
+
+A real 0.1-point disagreement on the same measure for the same period. **The system labels it
+`RECONCILED_BY_CONTEXT` instead**, because the extractor tagged the Survey fact
+`scope: consolidated` — a corporate-accounting term that means nothing for a national growth
+figure. One spurious claim-key component was enough for a rule to explain away a real
+difference, and to stop the pair ever reaching the model that should have judged it. That is
+reported here rather than hidden, and it is itself an instance of case 4.
+
+### 3 · An apparent contradiction, explained by context
+
+FY24 revenue from services `₹8,142 Cr` (fact `#1048`) against Q4 FY24 revenue from services
+`₹2,076 Cr` (fact `#1085`) — same subject, same attribute, a four-fold gap.
+
+`normalize/periods.py` resolves both labels to real date intervals and finds the second
+**contained within** the first. Exactly one claim-key component differs, so the pair is
+`RECONCILED_BY_CONTEXT` with discriminator *"period (one covers part of the other)"* —
+relation `#661`, **decided by rule**, zero model calls. An annual figure and its own fourth
+quarter are not a contradiction; containment is what that looks like.
+
+```bash
+python -m crosscheck.cli relations --type RECONCILED_BY_CONTEXT --query "against Q4 FY2023-24" --limit 1
+```
+
+### 4 · Failures found by running it, and what was done about them
+
+Eight distinct issues surfaced by auditing the pipeline's own output. **Five fixed with
+tests, three documented honestly.**
+
+| | Failure | Outcome |
+|---|---|---|
+| 4a | A whole table row copied into one value — *invisible to grounding*, since the string is genuinely verbatim, and `values.py` then reads the year `2021` as the number | **Fixed** twice: a validation guard, then the cause removed by measuring a better extractor — table grounding 59% → 99.3%, 845 → 2,760 table facts |
+| 4b | Value truncated mid-phrase (`"5.6 percent of"`) | **Fixed** — dangling-word check |
+| 4c | `token_set_ratio` silently merged `revenue` with `percentage of revenue` across the whole vocabulary | **Fixed** — the most consequential bug found |
+| 4d | Numerology in the derived-value checker (`exercise price ÷ deposit balance ≈ volatility`) | **Fixed** — the target must name itself as a ratio |
+| 4e | Reconciliation re-paying for adjudications it had already made | **Fixed** — UNRELATED verdicts stored too |
+| 4f | Directors' biographies collapse under `subject: Delhivery Limited`, because the block with *"He holds a bachelor's degree…"* lost the sentence naming him. **Every `CONTRADICTS` relation currently stored is a false positive of this shape** | **Found, not fixed** — needs wider blocks or a coreference pass, not a one-line guard |
+| 4g | Chart axis labels read linearly into one scrambled but genuine string | **Found, not fixed** — provably inert: no number parses, so `value_num` stays `None` |
+
+The **Review** screen is where this work happened: 1,382 rejections, grouped by what actually
+went wrong — 811 quotes not in the source, 341 quotes that were real but whose number was not
+inside them, 109 short quotes not found verbatim. That second row is the dangerous class, and
+it is why the grounding gate checks the value separately from the quote.
+
+```bash
+python -m crosscheck.cli review
+```
 
 ---
 

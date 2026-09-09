@@ -77,8 +77,8 @@ FY24 revenue from services (`₹8,142 Cr`) against Q4 FY24 revenue from services
 (`₹2,076 Cr`) — same subject, same attribute, and at a glance a factor-of-four disagreement
 in what should be one number.
 
-- **A** (fact `#1048`): *"₹8,142 Cr / FY24 revenue from services"* — deck, p.5
-- **B** (fact `#1085`): *"₹2,076 Cr / Q4 FY24 revenue from services"* — deck, p.6
+- **A** (fact `#1048`): *"₹8,142 Cr / FY24 revenue from services"* — deck, p.6
+- **B** (fact `#1085`): *"₹2,076 Cr / Q4 FY24 revenue from services"* — deck, p.7
 
 `normalize/periods.py` resolves `FY2023-24` and `Q4 FY2023-24` to concrete intervals and
 reports the second as fully **contained within** the first, rather than disjoint. The rule
