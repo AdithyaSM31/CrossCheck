@@ -32,6 +32,29 @@ python -m crosscheck.cli schema --limit 20
 python -m crosscheck.cli review
 ```
 
+## An unseen document, to try ingestion yourself
+
+`delhivery-annual-report-fy25-excerpt.pdf` is a 15-page excerpt of Delhivery's **FY25**
+annual report ([source](https://www.delhivery.com/uploads/2025/08/Annual_Report_FY25.pdf)),
+kept here because the corpus above contains the **FY24** one. Drop it into the UI, or
+`python -m crosscheck.cli ingest samples/delhivery-annual-report-fy25-excerpt.pdf`, and the
+overlap makes incremental ingestion visible rather than merely claimed. Measured against a
+copy of the database above:
+
+- 19 blocks, 334 grounded facts from 377 proposed (89%)
+- identified as "Annual Report 2024-25", Delhivery Limited — inferred, not configured
+- **358 new relations to the already-ingested corpus, every one decided by rule**:
+  314 reconciled-by-context, 41 corroborations, 3 derived
+
+The clearest corroboration: `total income (INR)` = ₹85,942.34 million for FY2023-24 appears
+in the FY24 report *and* in the FY25 report's comparative column, matched on the claim key
+rather than on text. The clearest reconciliation comes from inside the new file alone --
+`revenue from operations` for FY2024-25 is ₹82,524.47 million standalone and ₹89,319.01
+million consolidated, separated by scope rather than called a contradiction.
+
+Extraction needs a key. Ingestion, layout reconstruction and block-building do not, so
+`ingest` alone works on this file with no credentials at all.
+
 ## What this does not include
 
 Uploading a *new* PDF still needs an API key (`.env`, see `.env.example`) — this sample only

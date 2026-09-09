@@ -10,6 +10,17 @@ segment 1's sentence (everything after "Indian economy"), segment 2's third sent
 segment 8's first two sentences. The four cases and the evidence shot are what's being
 marked; everything else is padding you can lose without losing a requirement.
 
+## Film segment 2 first, on its own, then reset
+
+Segment 2 uploads a PDF, and a completed upload changes every number the rest of the
+script points at -- the stat strip, `7,750` on the Facts tab, the rejection counts, the
+`4,579`. Filming in order and letting the upload finish in the background will quietly
+invalidate segments 6, 7 and 8 while you are still talking.
+
+So: **shoot segment 2 as its own take, then reset the database and restart the server
+before shooting anything else.** Drop it into position 2 when you edit. Everything after
+that is read-only, so it can be filmed in one continuous pass.
+
 ## Before you hit record
 
 ```bash
@@ -18,11 +29,18 @@ cp samples/crosscheck.sample.db data/crosscheck.db      # the real, populated ru
 python -m uvicorn crosscheck.api.app:app --port 8077
 ```
 
+Run those same two commands again -- the copy and a server restart -- between the
+segment 2 take and the rest.
+
 - Open <http://localhost:8077> — land on **Documents**. The header reads your live
   `.env`, so it will name whichever models you have configured.
 - Open a second terminal, `cd crosscheck`, ready for the CLI shots.
-- Have one PDF in your file picker ready to drag (any of `starter-datasets/**`, or an
-  unrelated PDF — it works on documents it has never seen, which is worth saying).
+- Have `samples/delhivery-annual-report-fy25-excerpt.pdf` open in your file picker,
+  ready to drag. 15 pages, 19 blocks — enough that the counter visibly moves. Measured
+  end to end it took 33 minutes, almost all of it waiting out Cerebras' 5-requests-per-minute
+  free-tier limit, so do not plan to film it finishing. It is Delhivery's **FY25** annual report, a document
+  the corpus has never seen; the corpus holds the **FY24** one. See segment 2 for why that
+  matters.
 - Browser zoom ~110%. Close other tabs.
 
 ---
@@ -45,15 +63,43 @@ picks it up if you have room.)*
 
 ## 2 · A PDF going in — 0:15–0:35
 
-**Screen:** Drag a PDF onto the drop zone. A progress bar appears under it with the
-filename, the stage — `ingesting` → `identifying` → `extracting` — and an `n / N blocks`
-chip that ticks upward.
+**Screen:** Drag `delhivery-annual-report-fy25-excerpt.pdf` onto the drop zone. A progress
+bar appears under it with the filename, the stage — `ingesting` → `identifying` →
+`extracting` — and an `n / N blocks` chip that ticks up towards 19.
 
 > "Drop in a PDF and the whole thing runs — layout rebuilt from word positions, facts
-> extracted, each one checked against the source, then compared against everything already
-> known. It takes a few minutes, so here's a corpus already built."
+> extracted, each one grounded, then compared against everything already known. This is
+> Delhivery's FY25 report; the corpus only knows FY24. It takes a while on a free tier, so
+> here's one already built."
 
-**Cut** as soon as the counter ticks. Don't wait for it.
+**Cut** once the counter reaches 3 or 4 of 19. Don't wait for it.
+
+*Why this file and not any PDF: it is genuinely unseen, and it overlaps. The narration's
+last clause is what turns this shot from a progress bar into a claim about the system — and
+the claim is verified. Running the full pipeline on this file against a copy of the sample
+database produced:*
+
+| | |
+|---|---|
+| facts extracted | 334 grounded from 377 proposed (89%) |
+| identified as | "Annual Report 2024-25", Delhivery Limited — inferred, not configured |
+| new relations to the existing corpus | **358**, all by rule, zero model calls |
+| of which | 314 reconciled-by-context, 41 corroborations, 3 derived |
+
+*The cleanest one: `total income (INR)` = **₹85,942.34 million, FY2023-24** appears in the
+FY24 annual report already in the corpus **and** in the FY25 report's comparative column.
+Two independently ingested documents, same figure, matched on a claim key rather than on
+text. Freight costs (₹59,707.49 M) and employee benefits (₹14,367.70 M) corroborate the
+same way.*
+
+*It also self-contradicts usefully: `revenue from operations` for FY2024-25 is ₹82,524.47 M
+standalone and ₹89,319.01 M consolidated — same measure, same period, reconciled by scope,
+from a single fresh document.*
+
+**If you have time before filming**, run the upload to completion once, then film segment 2
+against the finished result and add ten seconds showing one of those corroborations on the
+Findings tab. It is the strongest evidence of incremental ingest in the whole demo. If you
+don't, the five-second progress shot plus the narration is enough.
 
 ---
 
@@ -66,11 +112,10 @@ below the table with the quote, three relationships, and the highlighted page im
 *Point at the **Grounding** column as you say the second sentence — every row reads
 `verbatim`.*
 
-> "Every fact had to survive two checks: its quote has to actually appear in the source
-> text, and the number has to appear inside that quote. That second check is the one that
-> matters — it catches a real quote paired with a number lifted from the next row of a
-> table. Anything that fails is rejected, not stored. And here's the page it came from,
-> with the evidence boxed."
+> "Every fact survived two checks: its quote has to appear in the source text, and the
+> number has to appear inside that quote. That second one matters — it catches a real quote
+> paired with a number lifted from the next row of a table. Anything that fails is rejected,
+> not stored. And here's the page it came from, evidence boxed."
 
 *(Let the highlighted slide image sit on screen for a beat — it's the strongest single
 image in the demo.)*
@@ -162,8 +207,9 @@ DERIVED CONSISTENT with their own counts. Close it; every card carries a
 - **Search returns nothing** — same cause: check the sample DB actually landed.
 - **Evidence image doesn't load** — it needs `starter-datasets/` present; it's committed, so
   just confirm you're running from the repo root.
-- **Upload seems stuck** — expected; it's rate-limited on the free tier. Cut away, that shot
-  only needs five seconds of movement.
+- **Upload seems stuck** — expected, and measured: 19 blocks took 33 minutes, 14 of those
+  calls sat waiting on the free tier's rate limit. The shot needs five seconds of movement,
+  not a finished run. Cut away.
 
 ## Two things worth saying if you have room
 
